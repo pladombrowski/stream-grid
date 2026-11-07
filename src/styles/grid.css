@@ -331,7 +331,7 @@ body.dragging .tile.dragged .bar {
   @apply overflow-hidden text-ellipsis;
   @apply whitespace-nowrap font-bold;
 }
-.tile .bar span {
+.tile .bar > span {
   color: var(--dim);
   font-variant-numeric: tabular-nums;
 }
@@ -496,6 +496,11 @@ body.dragging .tile.dragged .bar {
       padding: 0 8px;
       background: var(--raised);
     }
+  }
+}
+@container (width < 560px) {
+  .tile .extensions-count {
+    display: none;
   }
 }
 .tile .stream-info {
@@ -1041,6 +1046,129 @@ body.dragging .tile.dragged .bar {
 .tile .collaboration-menu .add-collaboration:hover:not(:disabled) {
   background: #a66aff;
 }
+.extensions {
+  flex: none;
+}
+.extensions summary {
+  @apply flex items-center;
+  @apply gap-[5px] h-[28px];
+  padding: 0 6px;
+  @apply rounded-[4px];
+  font-size: 12px;
+  line-height: 16px;
+  font-variant-numeric: tabular-nums;
+  list-style: none;
+  @apply cursor-pointer;
+  background: #ffffff18;
+  transition: background-color 0.2s var(--ease);
+}
+.extensions summary::-webkit-details-marker {
+  @apply hidden;
+}
+.extensions summary:hover,
+.extensions[open] summary {
+  background: #ffffff30;
+}
+.extensions summary span {
+  color: var(--fg);
+}
+.extensions-menu {
+  @apply fixed;
+  z-index: 20;
+  touch-action: auto;
+  @apply overflow-y-auto p-[8px];
+  border: 1px solid var(--line);
+  @apply rounded-[8px];
+  background: var(--panel);
+  color: var(--fg);
+  box-shadow: 0 12px 32px #181818a6;
+  @apply cursor-default;
+  animation: menu-in 0.3s var(--ease);
+}
+.extensions-heading {
+  @apply block;
+  padding: 4px 4px 8px;
+  color: var(--dim);
+  font-size: 12px;
+  line-height: 16px;
+  @apply font-semibold;
+}
+.extensions-row {
+  @apply flex items-center;
+  @apply gap-[8px];
+  padding: 6px 4px;
+  @apply rounded-[6px];
+  transition: background-color 0.2s var(--ease);
+}
+.extensions-row:hover {
+  background: #ffffff0a;
+}
+.extensions-row img {
+  flex: none;
+  @apply w-[28px] h-[28px];
+  @apply rounded-[6px] object-cover;
+}
+.extensions-row > div {
+  flex: 1;
+  min-width: 0;
+}
+.extensions-name {
+  @apply block overflow-hidden;
+  @apply text-ellipsis whitespace-nowrap;
+  color: var(--fg);
+  font-size: 12px;
+  line-height: 16px;
+  @apply font-semibold;
+}
+.extensions-row small {
+  @apply block overflow-hidden;
+  @apply text-ellipsis whitespace-nowrap;
+  color: var(--dim);
+  font-size: 12px;
+  line-height: 16px;
+}
+.tile .extensions-row button {
+  flex: none;
+  @apply h-[28px] rounded-[4px];
+  padding: 0 8px;
+  background: #9147ff40;
+  color: var(--fg);
+  font-size: 12px;
+  @apply font-semibold;
+  transition:
+    background-color 0.2s var(--ease),
+    transform 0.2s var(--ease);
+}
+.tile .extensions-row button:hover:not(:disabled) {
+  background: var(--accent);
+  color: #fff;
+}
+.tile .extensions-row button:active:not(:disabled) {
+  background: var(--accent);
+  transform: scale(0.98);
+  color: #fff;
+}
+.tile .extensions-row a {
+  flex: none;
+  display: flex;
+  align-items: center;
+  min-height: 28px;
+  padding: 0 4px;
+  color: var(--dim);
+  font-size: 12px;
+  text-decoration: none;
+}
+.tile .extensions-row a:hover {
+  color: var(--fg);
+}
+.extensions-note {
+  padding: 8px 4px 4px;
+  margin-top: 6px;
+  border-top: 1px solid var(--line);
+  color: var(--dim);
+  font-size: 11px;
+  line-height: 15px;
+}
 .chat iframe {
   flex: 1;
   min-height: 0;
@@ -1451,6 +1579,7 @@ body.collapsed #list-empty {
   dialog[open]::backdrop,
   .chat-menu,
   .collaboration-menu,
+  .extensions-menu,
   .grid-menu,
   #preview,
   #update,

@@ -1,6 +1,6 @@
 const { test, expect } = require('@playwright/test');
 const { mockPlayer, choose } = require('./fixtures.cjs');
-async function setup(page, connected = false, landing = false) {
+async function setup(page, connected = false, landing = false, extensions = []) {
   const errors = []; page.on('pageerror', e => errors.push(e.message));
   if (!landing) await page.addInitScript(() => sessionStorage.setItem('tg.landing', 'true'));
   await page.addInitScript(() => {   // this suite covers the Twitch embed; the custom player has its own
@@ -14,6 +14,10 @@ async function setup(page, connected = false, landing = false) {
     if (params.has('login')) return route.fulfill({json:{data:params.getAll('login').map(login => ({broadcaster_login:login,is_live:true}))}});
     const login = params.get('q').toLowerCase();
     return route.fulfill({json:{data:[{broadcaster_login:login,display_name:login,is_live:true,game_name:'',thumbnail_url:''}]}});
+  });
+  await page.route('**/api/extensions?**', route => {
+    const channel = new URL(route.request().url()).searchParams.get('channel') || '';
+    return route.fulfill({ json: { channel, extensions } });
   });
   await page.route('**/config.json', r => r.fulfill({ json: { twitchClientId: connected ? 'test-client' : '' } }));
   await page.route('**/_vercel/**', r => r.fulfill({ body: '' }));
@@ -3110,5 +3114,137 @@ test('the sidebar spotlights a stream: a lone tile gives its place, a grid keeps
   expect(await page.evaluate(() => ({ focused, count: tiles.size }))).toEqual({ focused: 'three', count: 3 });
   await expect(page.locator('#list [data-login="one"] .spotlight')).toBeHidden();
   await expect(row.locator('.spotlight')).toBeVisible();
+  expect(errors).toEqual([]);
+});
+const extensionFixture = {
+  id: 'k6ji189bf7i4ge8il4iczzw7kpgmjt',
+  name: '7 Days to Die Integration',
+  description: 'Viewers interact with the live game.',
+  icon: '',
+  version: '3.4.1',
+  type: 'overlay',
+  slot: 'extension-overlay-1',
+  viewerUrl: 'https://k6ji.ext-twitch.tv/video_overlay.html',
+  height: null,
+  targetHeight: null,
+  aspectRatio: null,
+};
+
+async function extensionTile(page, extensions = [extensionFixture]) {
+  const errors = await setup(page, false, false, extensions);
+  await page.addInitScript(() => {
+    window.__openedExtensions = [];
+    window.__closedExtensions = 0;
+    window.open = (url, name, features) => {
+      const win = {
+        closed: false,
+        focus() {},
+        close() {
+          win.closed = true;
+          window.__closedExtensions++;
+        },
+      };
+      window.__openedExtensions.push({ url, name, features, win });
+      return win;
+    };
+  });
+  await page.goto('/');
+  await favorite(page, 'tiranumisu');
+  await page.locator('[data-login="tiranumisu"] .channel').click();
+  return errors;
+}
+
+test('extensions: a live tile lists its Twitch extensions and opens the official popout window', async ({ page }) => {
+  const errors = await extensionTile(page);
+  await expect(page.locator('#grid [data-login="tiranumisu"] .extensions')).toBeVisible();
+  await page.locator('#grid [data-login="tiranumisu"] .extensions summary').click();
+  await expect(page.locator('.extensions-menu .extensions-name')).toHaveText('7 Days to Die Integration');
+  await expect(page.locator('.extensions-menu small')).toHaveText('Overlay');
+  await page.locator('.extensions-menu button').click();
+  const opened = await page.evaluate(() => window.__openedExtensions);
+  expect(opened).toHaveLength(1);
+  expect(opened[0].url).toBe('https://www.twitch.tv/popout/tiranumisu/extensions/k6ji189bf7i4ge8il4iczzw7kpgmjt/video_overlay');
+  expect(opened[0].features).toContain('width=');
+  expect(opened[0].features).toContain('height=');
+  await expect(page.locator('#grid [data-login="tiranumisu"] .extensions summary')).toBeFocused();
+  await expect(page.locator('.extensions-menu')).toBeHidden();
+  expect(errors).toEqual([]);
+});
+test('extensions: a tile without active extensions keeps the puzzle button hidden', async ({ page }) => {
+  const errors = await extensionTile(page, []);
+  await expect(page.locator('#grid [data-login="tiranumisu"]')).toBeVisible();
+  await expect(page.locator('#grid [data-login="tiranumisu"] .extensions')).toHaveCount(1);
+  await expect(page.locator('#grid [data-login="tiranumisu"] .extensions')).toBeHidden();
+  expect(errors).toEqual([]);
+});
+test('extensions: a failed lookup retries after 60 seconds and shows the button', async ({ page }) => {
+  const errors = await setup(page, false, false, []);
+  let calls = 0;
+  await page.route('**/api/extensions?**', route => {
+    calls++;
+    const channel = new URL(route.request().url()).searchParams.get('channel') || '';
+    if (calls === 1)
+      return route.fulfill({ status: 503, json: { error: 'EXTENSIONS_UNAVAILABLE' } });
+    return route.fulfill({ json: { channel, extensions: [extensionFixture] } });
+  });
+  await page.clock.install();
+  await page.goto('/');
+  await favorite(page, 'tiranumisu');
+  await page.locator('[data-login="tiranumisu"] .channel').click();
+  await expect.poll(() => calls).toBe(1);
+  await expect.poll(() => page.evaluate(() => tiles.get('tiranumisu')?.extensionsFailed)).toBe(true);
+  await expect(page.locator('#grid [data-login="tiranumisu"] .extensions')).toBeHidden();
+  await page.clock.runFor(30000);
+  await expect.poll(() => page.evaluate(() => !refreshInFlight)).toBe(true);
+  expect(calls).toBe(1);
+  await page.clock.runFor(29000); // total 59s after the failure
+  expect(calls).toBe(1);
+  await page.clock.runFor(32000); // total 91s: the next 30s refresh tick after the 60s backoff
+  await expect.poll(() => calls).toBe(2);
+  await expect(page.locator('#grid [data-login="tiranumisu"] .extensions')).toBeVisible();
+  expect(errors).toEqual([]);
+});
+test('extensions: dragging inside the menu does not start a tile drag', async ({ page }) => {
+  const errors = await extensionTile(page);
+  await favorite(page, 'other');
+  await page.locator('[data-login="other"] .channel').click();
+  await expect(page.locator('#grid .tile')).toHaveCount(2);
+  await page.locator('#grid [data-login="other"]').hover();
+  await page.locator('#grid [data-login="other"] .spotlight').click();
+  await page.locator('#grid [data-login="tiranumisu"]').hover();
+  await page.locator('#grid [data-login="tiranumisu"] .extensions summary').click();
+  const note = page.locator('#grid [data-login="tiranumisu"] .extensions-menu .extensions-note');
+  await note.hover();
+  const box = await note.boundingBox();
+  await page.mouse.move(box.x + 10, box.y + 10);
+  await page.mouse.down();
+  await page.mouse.move(box.x + 40, box.y + 30, { steps: 5 });
+  await expect(page.locator('body')).not.toHaveClass(/dragging/);
+  expect(await page.evaluate(() => dragging)).toBe(null);
+  await expect(page.locator('.drag-ghost')).toHaveCount(0);
+  await page.mouse.up();
+  expect(await page.evaluate(() => [...order])).toEqual(['tiranumisu', 'other']);
+  await expect(page.locator('#grid [data-login="tiranumisu"] .extensions-menu')).toBeVisible();
+  expect(errors).toEqual([]);
+});
+test('extensions: a blocked popup shows the notice and keeps the menu open', async ({ page }) => {
+  const errors = await extensionTile(page);
+  await page.evaluate(() => {
+    window.open = () => null;
+  });
+  await page.locator('#grid [data-login="tiranumisu"] .extensions summary').click();
+  await page.locator('.extensions-menu button').click();
+  await expect(page.locator('#notice')).toContainText('Autorise les fenêtres pop-up pour ouvrir les extensions Twitch.');
+  await expect(page.locator('.extensions-menu')).toBeVisible();
+  expect(errors).toEqual([]);
+});
+test('extensions: removing the tile closes its extension windows', async ({ page }) => {
+  const errors = await extensionTile(page);
+  await page.locator('#grid [data-login="tiranumisu"] .extensions summary').click();
+  await page.locator('.extensions-menu button').click();
+  await expect.poll(() => page.evaluate(() => window.__openedExtensions.length)).toBe(1);
+  await page.locator('#grid [data-login="tiranumisu"] .close').click();
+  await expect(page.locator('#grid [data-login="tiranumisu"]')).toHaveCount(0);
+  expect(await page.evaluate(() => window.__closedExtensions)).toBe(1);
   expect(errors).toEqual([]);
 });

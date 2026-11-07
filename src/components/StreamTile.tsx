@@ -58,6 +58,44 @@ export function StreamTile({
         </div>
         <span className="viewers"></span>
         <div className="actions">
+          <details className="extensions" hidden>
+            <summary
+              title="Extensions Twitch"
+              data-i18n-title="Extensions Twitch"
+              aria-label="Extensions Twitch"
+            >
+              <svg
+                viewBox="0 0 24 24"
+                width="14"
+                height="14"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                aria-hidden="true"
+              >
+                <path d="M20.5 11H19V7a2 2 0 0 0-2-2h-4V3.5a2.5 2.5 0 0 0-5 0V5H4a2 2 0 0 0-2 2v3.5h1.5a2.5 2.5 0 0 1 0 5H2V19a2 2 0 0 0 2 2h4v-1.5a2.5 2.5 0 0 1 5 0V21h4a2 2 0 0 0 2-2v-4h1.5a2.5 2.5 0 0 1 0-5Z" />
+              </svg>
+              <span className="extensions-count" aria-hidden="true"></span>
+            </summary>
+            <div className="extensions-menu">
+              <span
+                className="extensions-heading"
+                data-i18n="Extensions actives"
+              >
+                Extensions actives
+              </span>
+              <div className="extensions-list"></div>
+              <p
+                className="extensions-note"
+                data-i18n="Les extensions Twitch s’ouvrent dans une fenêtre séparée ; Twitch ne permet pas de les intégrer à un autre site."
+              >
+                Les extensions Twitch s’ouvrent dans une fenêtre séparée ;
+                Twitch ne permet pas de les intégrer à un autre site.
+              </p>
+            </div>
+          </details>
           <details className="collaboration" hidden>
             <CollaborationMenu />
           </details>

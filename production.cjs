@@ -1,7 +1,8 @@
-// Caddy serves dist; this loopback-only process owns the two Twitch API routes.
+// Caddy serves dist; this loopback-only process owns the Twitch API routes.
 const { createServer } = require('node:http');
 const search = require('./api/search.js');
 const stream = require('./api/stream.js');
+const extensions = require('./api/extensions.js');
 
 function createApiServer() {
   return createServer(async (req, res) => {
@@ -15,7 +16,10 @@ function createApiServer() {
     try {
       const path = new URL(req.url, 'http://localhost').pathname;
       if (path === '/healthz' && req.method === 'GET') return res.json({ ok: true });
-      const handler = path === '/api/search' ? search : path === '/api/stream' ? stream : null;
+      const handler = path === '/api/search' ? search
+        : path === '/api/stream' ? stream
+        : path === '/api/extensions' ? extensions
+        : null;
       if (!handler) return res.status(404).json({ error: 'NOT_FOUND' });
       await handler(req, res);
     } catch {

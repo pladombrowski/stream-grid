@@ -13,14 +13,14 @@ pnpm install
 pnpm dev
 ```
 
-Open http://localhost:8765. Vite serves the React app and the local search endpoint. Twitch embeds require an HTTP hostname; opening the HTML as a local file does not work.
+Open http://localhost:8765. Vite serves the React app and the local API endpoints. Twitch embeds require an HTTP hostname; opening the HTML as a local file does not work.
 
 To test on an iPad or another device on the same local network, run `pnpm dev:lan` and open the Network URL printed by Vite. You can choose a port with `pnpm dev:lan 8766`.
 
 ```sh
 pnpm check          # Strict TypeScript and server syntax checks
 pnpm build          # Validates and builds the app into dist
-pnpm preview        # Serves the production build and local search endpoint
+pnpm preview        # Serves the production build and local API endpoints
 pnpm start          # Production API only, on 127.0.0.1:8766 (Caddy serves dist)
 pnpm test:server    # API behavior and translation coverage
 pnpm test           # Browser behavior tests
@@ -39,8 +39,8 @@ The frontend uses React, strict TypeScript, and Tailwind CSS, built with Vite.
 - `src/types` defines channels, saved layouts, commands, and the Twitch player interface.
 - `src/styles` groups Tailwind styles by application area. The original reset, colors, dimensions, animations, and responsive rules are retained. Tailwind Preflight is intentionally omitted because it changes native buttons, dialogs, and typography.
 - `public` contains the public Twitch client configuration, favicon, and share image.
-- `api/search.js` and `api/stream.js` are shared by local development and the production Node server.
-- `production.cjs` serves the two API routes and `/healthz` using Node's built-in HTTP server; it needs no installed runtime dependencies.
+- `api/search.js`, `api/stream.js` and `api/extensions.js` are shared by local development and the production Node server.
+- `production.cjs` serves the three API routes and `/healthz` using Node's built-in HTTP server; it needs no installed runtime dependencies.
 
 One React root owns the interface. A small external view store uses React portals to render into stable tile and list containers. Twitch owns its iframe mount nodes. Reordering changes CSS order without moving those nodes, and expanding a tile leaves its player in place. The workspace disposes timers, observers, subscriptions, and players when its mount is released.
 
@@ -111,6 +111,27 @@ Chat is available on a single tile, spotlight, and tiles wide enough to fit it. 
 Choose Auto, Top, Bottom, Left, or Right. Selecting a position opens chat immediately. Auto uses space below the video when at least 420 pixels remain; otherwise it chooses the placement with the larger video. Side chat can expand from 320 to 480 pixels into unused vertical letterboxing.
 
 Chat settings persist per tile and account mode. Repositioning an open chat keeps its iframe and video player mounted. The menu can also open chat on Twitch, which handles authorization to write messages.
+
+## Twitch extensions
+
+Tiles whose live channel has active Twitch extensions show a puzzle button in
+their header. The menu lists the active overlay, component and panel
+extensions, and opens each one on Twitch's official popout page in a companion
+window sized to the tile.
+
+Twitch does not allow its extension iframes to run on another site: the
+supervisor and extension responses restrict `frame-ancestors` to Twitch
+domains, the popout pages send `X-Frame-Options: SAMEORIGIN`, and the official
+embeds do not load extensions. The companion window is therefore the supported
+path, not a workaround that can be replaced by an iframe. Browsers control the
+window chrome and may block pop-ups until the viewer allows them.
+
+`GET /api/extensions?channel=…` discovers the active installations through
+Twitch's public GraphQL endpoint. It returns only public metadata (name, icon,
+type, size and viewer URL), never the extension tokens. Results are cached for
+five minutes per channel, concurrent requests are shared, and cache misses are
+limited per client address. The endpoint uses the public web client ID already
+used for playback and needs no additional environment variables.
 
 ## Status, previews, and collaborations
 

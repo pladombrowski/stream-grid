@@ -1,4 +1,5 @@
 import type { Channel, ChatPosition, Latency } from "./domain";
+import type { ChannelExtension } from "../services/extensions";
 export interface TwitchPlayer {
   addEventListener(event: string, callback: () => void): void;
   getPlayerState(): { playback: string };
@@ -54,6 +55,11 @@ export interface Tile {
   chatOptions: HTMLDetailsElement;
   collaboration: HTMLDetailsElement;
   participants: Channel[];
+  extensions: HTMLDetailsElement;
+  extensionsList: ChannelExtension[];
+  extensionsCheckedAt?: number;
+  extensionsLoading?: boolean;
+  extensionsFailed?: boolean;
   cover: HTMLDivElement;
   poster: HTMLImageElement;
   previewStatus: HTMLDivElement;

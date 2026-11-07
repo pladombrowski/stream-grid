@@ -22,6 +22,7 @@ import { type WorkspaceViews } from "../components/render";
 import { StreamTile } from "../components/StreamTile";
 import { ChannelList } from "../components/ChannelList";
 import { CollaborationParticipants } from "../components/CollaborationParticipants";
+import { ExtensionsList } from "../components/ExtensionsMenu";
 import { LiveNotification } from "../components/LiveNotification";
 import { SavedGridList } from "../components/SavedGridList";
 import { SoundBoard } from "../components/SoundBoard";
@@ -42,6 +43,15 @@ import {
   refreshNumberFormat,
 } from "../services/library";
 import { GridStore } from "../services/grids";
+import {
+  channelExtensions,
+  extensionPopoutUrl,
+  type ChannelExtension,
+} from "../services/extensions";
+import {
+  closeExtensionWindows,
+  openExtensionWindow,
+} from "../services/extensionWindows";
 import { credit, decayed, type WatchEntry } from "../services/watchtime";
 
 export function startWorkspace(
@@ -320,6 +330,7 @@ export function startWorkspace(
       restore();
       return;
     }
+    closeExtensionWindows();
     saveCurrentLayout();
     restored = false;
     clearTiles();
@@ -435,7 +446,7 @@ export function startWorkspace(
   function closeTileMenus(returnFocus = false, except: Element | null = null) {
     let closed = false;
     for (const menu of document.querySelectorAll<HTMLDetailsElement>(
-      ".chat-options[open], .collaboration[open], .custom-quality[open], #grid-switcher[open], #list-order-menu[open]",
+      ".chat-options[open], .collaboration[open], .extensions[open], .custom-quality[open], #grid-switcher[open], #list-order-menu[open]",
     )) {
       if (menu === except) continue;
       menu.open = false;
@@ -448,7 +459,7 @@ export function startWorkspace(
     closeTileMenus(
       false,
       (e.target as Element).closest(
-        ".chat-options, .collaboration, .custom-quality, #grid-switcher, #list-order-menu",
+        ".chat-options, .collaboration, .extensions, .custom-quality, #grid-switcher, #list-order-menu",
       ),
     ),
   );
@@ -471,6 +482,134 @@ export function startWorkspace(
     menu.style.maxHeight = height + "px";
     menu.style.top = above ? "auto" : anchor.bottom + 6 + "px";
     menu.style.bottom = above ? innerHeight - anchor.top + 6 + "px" : "auto";
+  }
+
+  function positionExtensionsMenu(t: Tile) {
+    const anchor = t.extensions
+      .querySelector<HTMLElement>("summary")!
+      .getBoundingClientRect();
+    const menu = t.extensions.querySelector<HTMLElement>(".extensions-menu")!;
+    const width = Math.min(360, innerWidth - 24);
+    const below = innerHeight - anchor.bottom - 18;
+    const above = below < 220 && anchor.top > below;
+    const height = Math.max(0, Math.min(460, above ? anchor.top - 18 : below));
+    menu.style.width = width + "px";
+    menu.style.left =
+      Math.max(12, Math.min(anchor.right - width, innerWidth - width - 12)) +
+      "px";
+    menu.style.maxHeight = height + "px";
+    menu.style.top = above ? "auto" : anchor.bottom + 6 + "px";
+    menu.style.bottom = above ? innerHeight - anchor.top + 6 + "px" : "auto";
+  }
+
+  function setupExtensions(t: Tile) {
+    const menu = t.extensions;
+    translateTree(menu);
+    menu.onclick = (e) => e.stopPropagation();
+    menu.ondragstart = (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+    };
+    menu.ontoggle = () => {
+      if (menu.open) {
+        closeTileMenus(false, menu);
+        positionExtensionsMenu(t);
+      }
+    };
+  }
+
+  function renderExtensions(t: Tile, list: ChannelExtension[]) {
+    t.extensionsList = list;
+    const available = list.length > 0 && t.channel.online !== false;
+    t.extensions.hidden = !available;
+    if (!available) t.extensions.open = false;
+    t.extensions.querySelector<HTMLElement>(".extensions-count")!.textContent =
+      String(list.length);
+    t.extensions
+      .querySelector<HTMLElement>("summary")!
+      .setAttribute(
+        "aria-label",
+        tr("Extensions Twitch : {count}", { count: list.length }),
+      );
+    const rows = t.extensions.querySelector<HTMLElement>(".extensions-list")!;
+    const active = document.activeElement;
+    const focusedRow = rows.contains(active)
+      ? active?.closest<HTMLElement>(".extensions-row")
+      : null;
+    const focusedExtension = focusedRow?.dataset.extension;
+    const focusedControl = active?.closest<HTMLElement>("a") ? "a" : "button";
+    views.render(
+      rows,
+      <ExtensionsList
+        extensions={list}
+        popoutUrl={(extension) =>
+          extensionPopoutUrl(t.el.dataset.login!, extension)
+        }
+        onOpen={(extension) => {
+          if (
+            openExtensionWindow(
+              t.el.dataset.login!,
+              extension,
+              t.el.querySelector<HTMLElement>(".player")!,
+            )
+          ) {
+            t.extensions.open = false;
+            t.extensions
+              .querySelector<HTMLElement>("summary")
+              ?.focus({ preventScroll: true });
+          } else {
+            notice(
+              tr(
+                "Autorise les fenêtres pop-up pour ouvrir les extensions Twitch.",
+              ),
+            );
+          }
+        }}
+      />,
+    );
+    translateTree(rows);
+    if (focusedExtension) {
+      const row = rows.querySelector<HTMLElement>(
+        `[data-extension="${focusedExtension}"]`,
+      );
+      if (row)
+        row
+          .querySelector<HTMLElement>(focusedControl)
+          ?.focus({ preventScroll: true });
+      else if (available)
+        t.extensions
+          .querySelector<HTMLElement>("summary")
+          ?.focus({ preventScroll: true });
+      else
+        t.bar
+          .querySelector<HTMLElement>(".chat-toggle")
+          ?.focus({ preventScroll: true });
+    }
+  }
+
+  async function refreshExtensions(t: Tile) {
+    const login = t.el.dataset.login!;
+    if (t.channel.online === false || t.extensionsLoading) return;
+    const age = Date.now() - (t.extensionsCheckedAt || 0);
+    if (t.extensionsFailed ? age < 60000 : age < 300000) return;
+    t.extensionsLoading = true;
+    try {
+      const list = await channelExtensions(login);
+      if (tiles.get(login) === t) {
+        t.extensionsFailed = false;
+        renderExtensions(t, list);
+      }
+    } catch {
+      if (tiles.get(login) === t) {
+        t.extensionsFailed = true;
+        if (!t.extensionsList.length) renderExtensions(t, []);
+      }
+    } finally {
+      if (tiles.get(login) === t) {
+        t.extensionsLoading = false;
+        t.extensionsCheckedAt = Date.now();
+      }
+    }
   }
   function updateCollaborationButtons(t: Tile) {
     if (!t.collaboration) return;
@@ -946,6 +1085,7 @@ export function startWorkspace(
   }
   function updateTileInfo(t: Tile, s: Channel) {
     const hadPoster = t.channel && showPoster(t);
+    const wasOnline = t.channel.online;
     t.channel = s;
     if (typeof s.online === "boolean") t.waitingForStatus = false;
     if (s.online === true) t.el.classList.remove("offline");
@@ -957,6 +1097,15 @@ export function startWorkspace(
         ? []
         : collaborations.get(s.twitch)?.participants || [],
     );
+    if (s.online === false) {
+      closeExtensionWindows(s.twitch);
+      if (t.extensionsList.length || !t.extensions.hidden)
+        renderExtensions(t, []);
+    } else if (wasOnline === false && s.online === true) {
+      t.extensionsCheckedAt = 0;
+      t.extensionsFailed = false;
+      void refreshExtensions(t);
+    }
     t.bar.querySelector<HTMLImageElement>(".stream-avatar")!.src = s.profileUrl;
     t.bar.querySelector<HTMLElement>(".viewers")!.textContent =
       s.online === false ? tr("Hors ligne") : s.viewersAmount.formatted;
@@ -1079,7 +1228,7 @@ export function startWorkspace(
             !e.isPrimary ||
             !canDrag(s.twitch) ||
             (e.target as Element).closest(
-              "button, a, input, select, summary, .volume",
+              "button, a, input, select, summary, .volume, .chat-menu, .collaboration-menu, .extensions",
             )
           )
             return;
@@ -1134,6 +1283,8 @@ export function startWorkspace(
       bar,
       collaboration: el.querySelector<HTMLDetailsElement>(".collaboration")!,
       participants: [],
+      extensions: el.querySelector<HTMLDetailsElement>(".extensions")!,
+      extensionsList: [],
       cover: el.querySelector<HTMLDivElement>(".preview-cover")!,
       poster: el.querySelector<HTMLImageElement>(".stream-poster")!,
       previewStatus: el.querySelector<HTMLDivElement>(".preview-status")!,
@@ -1153,6 +1304,8 @@ export function startWorkspace(
       chatOptions: el.querySelector<HTMLDetailsElement>(".chat-options")!,
     };
     setupChatResize(t, save);
+    setupExtensions(t);
+    void refreshExtensions(t);
     t.poster.onerror = () => {
       t.poster.hidden = true;
     };
@@ -1645,7 +1798,7 @@ export function startWorkspace(
     copy.setAttribute("aria-hidden", "true");
     copy
       .querySelectorAll<HTMLElement>(
-        "iframe, video, .chat, .volume, .load, .chat-menu, .collaboration-menu",
+        "iframe, video, .chat, .volume, .load, .chat-menu, .collaboration-menu, .extensions-menu",
       )
       .forEach((el) => el.remove());
     copy
@@ -1685,6 +1838,7 @@ export function startWorkspace(
 
   function remove(login: string, updateLayout = true, automatic = false) {
     if (!tiles.has(login) || (isLiveGrid() && !automatic)) return;
+    closeExtensionWindows(login);
     if (updateLayout) animateRemoval(tiles.get(login)!);
     if (expanded === login) setExpanded(null);
     const player = tiles.get(login)!.player;
@@ -1700,6 +1854,9 @@ export function startWorkspace(
     const tile = tiles.get(login)!;
     views.remove(
       tile.collaboration.querySelector<HTMLElement>(".collaboration-list")!,
+    );
+    views.remove(
+      tile.extensions.querySelector<HTMLElement>(".extensions-list")!,
     );
     views.remove(tile.el);
     tile.el.remove();
@@ -2106,6 +2263,7 @@ export function startWorkspace(
       updateCollaborationButtons(t);
       paint(t);
       if (t.collaboration.open) positionCollaborationMenu(t);
+      if (t.extensions.open) positionExtensionsMenu(t);
     }
     clearTimeout(mountTimer);
     const applySizes = () => {
@@ -2971,7 +3129,10 @@ export function startWorkspace(
       if (connected || $("#notice").textContent === tr(statusUnavailable))
         notice();
       for (const [login, t] of tiles)
-        if (logins.includes(login)) updateTileInfo(t, update(t.channel));
+        if (logins.includes(login)) {
+          updateTileInfo(t, update(t.channel));
+          void refreshExtensions(t);
+        }
       syncLiveGrid();
       updateLiveNotifications(connected ? follows : favorites);
       refreshCollaborations();
@@ -3175,6 +3336,7 @@ export function startWorkspace(
       refresh();
     }
   });
+  lifecycle.addEventListener("pagehide", () => closeExtensionWindows());
   setInterval(async () => {
     if (!library?.user) return;
     try {
@@ -3469,6 +3631,7 @@ export function startWorkspace(
     for (const t of tiles.values()) {
       paint(t);
       updateTileInfo(t, t.channel);
+      if (t.channel.online !== false) renderExtensions(t, t.extensionsList);
       t.chat.setAttribute(
         "aria-label",
         tr("Chat de {name}", { name: t.channel.display }),
@@ -3888,6 +4051,7 @@ export function startWorkspace(
     finishDrag();
     hidePreview();
     clearTiles();
+    closeExtensionWindows();
     lifecycle.dispose();
     views.dispose();
   };

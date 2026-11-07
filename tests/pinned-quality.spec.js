@@ -29,6 +29,11 @@ async function serve(page, { high, low, lowFails = () => false }) {
       },
     });
   });
+  await page.route("**/api/extensions?**", (route) => {
+    const channel =
+      new URL(route.request().url()).searchParams.get("channel") || "";
+    return route.fulfill({ json: { channel, extensions: [] } });
+  });
   await page.route("**/api/stream?**", (r) =>
     r.fulfill({
       contentType: "application/vnd.apple.mpegurl",

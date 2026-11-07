@@ -598,8 +598,17 @@ dialog input:focus-visible {
 }
 [data-theme="light"] .chat-options summary:hover,
 [data-theme="light"] .chat-options[open] summary,
-[data-theme="light"] .collaboration summary {
+[data-theme="light"] .collaboration summary,
+[data-theme="light"] .extensions summary {
   background: #7734d81a;
+}
+[data-theme="light"] .chat-options summary:hover,
+[data-theme="light"] .chat-options[open] summary,
+[data-theme="light"] .collaboration summary:hover,
+[data-theme="light"] .collaboration[open] summary,
+[data-theme="light"] .extensions summary:hover,
+[data-theme="light"] .extensions[open] summary {
+  background: #7734d833;
 }
 [data-theme="light"] dialog,
 [data-theme="light"] #sound-board {
@@ -615,6 +624,7 @@ dialog input:focus-visible {
 [data-theme="light"] .icon-button:hover:not(:disabled),
 [data-theme="light"] .sound-row .snd:hover,
 [data-theme="light"] .collaboration-row:hover,
+[data-theme="light"] .extensions-row:hover,
 [data-theme="light"] .chat-menu a:hover {
   background: #7734d80f;
 }
@@ -630,6 +640,7 @@ dialog input:focus-visible {
 }
 [data-theme="light"] .chat-menu,
 [data-theme="light"] .collaboration-menu,
+[data-theme="light"] .extensions-menu,
 [data-theme="light"] .grid-menu {
   box-shadow: 0 12px 32px #20202726;
 }

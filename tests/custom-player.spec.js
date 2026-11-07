@@ -34,6 +34,11 @@ async function setup(page, player = "embed", fail = false) {
       },
     });
   });
+  await page.route("**/api/extensions?**", (route) => {
+    const channel =
+      new URL(route.request().url()).searchParams.get("channel") || "";
+    return route.fulfill({ json: { channel, extensions: [] } });
+  });
   await page.route("**/api/stream?**", (route) =>
     fail
       ? route.fulfill({

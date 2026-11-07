@@ -232,6 +232,33 @@ export const translations: Record<string, [string, string]> = {
   Ajouter: ["Add", "Toevoegen"],
   "Ajouter {name}": ["Add {name}", "{name} toevoegen"],
   "Tout ajouter": ["Add all", "Alles toevoegen"],
+  "Extensions Twitch": ["Twitch extensions", "Twitch-extensies"],
+  "Extensions actives": ["Active extensions", "Actieve extensies"],
+  "Ouvrir la fenêtre": ["Open window", "Venster openen"],
+  "Ouvrir la fenêtre de {name}": [
+    "Open window: {name}",
+    "Venster openen: {name}",
+  ],
+  "Ouvrir {name} sur Twitch ↗": [
+    "Open {name} on Twitch ↗",
+    "{name} openen op Twitch ↗",
+  ],
+  "Extensions Twitch : {count}": [
+    "Twitch extensions: {count}",
+    "Twitch-extensies: {count}",
+  ],
+  Overlay: ["Overlay", "Overlay"],
+  Composant: ["Component", "Component"],
+  Panneau: ["Panel", "Paneel"],
+  "Les extensions Twitch s’ouvrent dans une fenêtre séparée ; Twitch ne permet pas de les intégrer à un autre site.":
+    [
+      "Twitch extensions open in a separate window; Twitch does not allow embedding them on another site.",
+      "Twitch-extensies openen in een apart venster; Twitch staat niet toe ze op een andere site in te sluiten.",
+    ],
+  "Autorise les fenêtres pop-up pour ouvrir les extensions Twitch.": [
+    "Allow pop-up windows to open Twitch extensions.",
+    "Sta pop-upvensters toe om Twitch-extensies te openen.",
+  ],
   "Chargement de l’aperçu…": ["Loading preview…", "Voorbeeld laden…"],
   "Aperçu indisponible": ["Preview unavailable", "Voorbeeld niet beschikbaar"],
   "Aperçu de {name}": ["Preview of {name}", "Voorbeeld van {name}"],
