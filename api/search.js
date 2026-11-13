@@ -95,7 +95,7 @@ module.exports = async function search(req, res) {
   res.setHeader('Cache-Control', 'no-store');
   res.setHeader('X-Content-Type-Options', 'nosniff');
   if (req.method !== 'GET') { res.setHeader('Allow', 'GET'); return res.status(405).json({ error: 'METHOD_NOT_ALLOWED' }); }
-  const params = new URL(req.url, 'https://twitch.moinax.com').searchParams;
+  const params = new URL(req.url, 'http://localhost').searchParams;
   const query = params.get('q')?.trim();
   const logins = params.getAll('login').map(login => login.toLowerCase());
   const exact = params.has('login');

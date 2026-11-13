@@ -19,7 +19,7 @@ module.exports = async function extensions(req, res) {
   const key = 'channel:' + login;
   // cached channels are served before the limiter: reloads and large grids must not spend the upstream budget
   if (cache.get(key)?.expiresAt > now) return res.status(200).json(cache.get(key).data);
-  // Caddy owns X-Forwarded-For; X-Real-IP passes through untouched and would let a client rotate identities
+  // The hosting proxy owns X-Forwarded-For; X-Real-IP passes through untouched and would let a client rotate identities
   const ip = String(req.headers?.['x-forwarded-for'] || '').split(',')[0].trim()
     || req.socket?.remoteAddress
     || 'unknown';

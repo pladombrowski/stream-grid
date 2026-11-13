@@ -1,5 +1,5 @@
 {
-  "name": "twitch-grid",
+  "name": "stream-grid",
   "version": "1.0.0",
   "private": true,
   "packageManager": "pnpm@11.25.0",
@@ -9,7 +9,7 @@
     "dev": "node --env-file-if-exists=.env.local server.cjs",
     "dev:lan": "node --env-file-if-exists=.env.local server.cjs --lan",
     "og:generate": "node scripts/render-share-image.cjs",
-    "test:server": "node --test tests/stream.test.cjs tests/search.test.cjs tests/extensions.test.cjs tests/extensionWindowGeometry.test.cjs tests/extensionsService.test.cjs tests/extensionWindows.test.cjs tests/youtube.test.cjs tests/i18n.test.cjs tests/watchtime.test.cjs tests/production.test.cjs tests/server-cli.test.cjs",
+    "test:server": "node --test tests/stream.test.cjs tests/search.test.cjs tests/extensions.test.cjs tests/extensionWindowGeometry.test.cjs tests/extensionsService.test.cjs tests/extensionWindows.test.cjs tests/youtube.test.cjs tests/i18n.test.cjs tests/watchtime.test.cjs tests/production.test.cjs tests/server-cli.test.cjs tests/branding.test.cjs",
     "build": "pnpm check && vite build",
     "preview": "vite preview --host localhost --port 8765",
     "format": "prettier --write src vite.config.mts",

@@ -1,8 +1,8 @@
-# Twitch grid
+# Stream Grid
 
 Watch several Twitch and YouTube live streams on one screen, arrange their tiles, put one in spotlight, and choose the sound for each stream.
 
-Site: https://twitch.moinax.com
+Site: https://stream-grid.caelmai.com
 
 ## Development
 
@@ -21,7 +21,7 @@ To test on an iPad or another device on the same local network, run `pnpm dev:la
 pnpm check          # Strict TypeScript and server syntax checks
 pnpm build          # Validates and builds the app into dist
 pnpm preview        # Serves the production build and local API endpoints
-pnpm start          # Production API only, on 127.0.0.1:8766 (Caddy serves dist)
+pnpm start          # Standalone API only, on 127.0.0.1:8766 (a static host serves dist)
 pnpm test:server    # API behavior and translation coverage
 pnpm test           # Browser behavior tests
 pnpm format         # Formats frontend source and Vite configuration
@@ -39,7 +39,7 @@ The frontend uses React, strict TypeScript, and Tailwind CSS, built with Vite.
 - `src/types` defines channels, saved layouts, commands, and the Twitch player interface.
 - `src/styles` groups Tailwind styles by application area. The original reset, colors, dimensions, animations, and responsive rules are retained. Tailwind Preflight is intentionally omitted because it changes native buttons, dialogs, and typography.
 - `public` contains the public Twitch client configuration, favicon, and share image.
-- `api/search.js`, `api/stream.js`, `api/extensions.js` and `api/youtube.js` are shared by local development and the production Node server.
+- `api/search.js`, `api/stream.js`, `api/extensions.js` and `api/youtube.js` are shared by local development, the Vercel functions, and the standalone Node server.
 - `production.cjs` serves the four API routes and `/healthz` using Node's built-in HTTP server; it needs no installed runtime dependencies.
 
 One React root owns the interface. A small external view store uses React portals to render into stable tile and list containers. Twitch owns its iframe mount nodes. Reordering changes CSS order without moving those nodes, and expanding a tile leaves its player in place. The workspace disposes timers, observers, subscriptions, and players when its mount is released.
@@ -84,7 +84,7 @@ With no iframe to cover, styled tooltips come back on every action, the player's
 
 This uses an undocumented playback mechanism, also used by [Streamlink](https://github.com/streamlink/streamlink/blob/master/src/streamlink/plugins/twitch.py). [Helix Get Streams](https://dev.twitch.tv/docs/api/reference/#get-streams) only provides stream metadata. Twitch can refuse playback or change its query, require client integrity, or change CDN CORS behavior. Anonymous playback does not inherit subscriptions or other account entitlements. Ads remain part of the supplied stream. Browser autoplay rules and codec support still apply; chat remains an iframe. The custom player does not remove all Twitch or browser constraints.
 
-Validated with real Twitch playback in headless Chromium against the production apps-host, including playlist proxying and direct CDN media playback. Safari native HLS still needs verification. Browser tests use a small generated HLS media fixture to check playback and switching without depending on live channels.
+Validated with real Twitch playback in headless Chromium against the production build, including playlist proxying and direct CDN media playback. Safari native HLS still needs verification. Browser tests use a small generated HLS media fixture to check playback and switching without depending on live channels.
 
 ## Playback, spotlight, and dragging
 
@@ -161,7 +161,7 @@ Collaboration indicators use Twitch shared-chat sessions in both account modes. 
 
 Create an application in the [Twitch developer console](https://dev.twitch.tv/console/apps). The visitor login application is Public and needs no client secret. Set its client ID in `public/config.json`, under `twitchClientId`. An empty ID disables login while keeping local favorites available.
 
-Register the exact OAuth return addresses, including `http://localhost:8765` for local development and the production origin. The current production origin is `https://twitch.moinax.com`, without a trailing slash. Login uses Twitch's implicit OAuth flow with only `user:read:follows`.
+Register the exact OAuth return addresses, including `http://localhost:8765` for local development and the production origin `https://stream-grid.caelmai.com`, without a trailing slash. Login uses Twitch's implicit OAuth flow with only `user:read:follows`. The login application belongs to the fork owner. Login only works on the registered origins, so use production or localhost to connect Twitch; preview deployment URLs are not registered.
 
 Guest search uses a separate Confidential Twitch application. Set these server environment variables in `.env.local` for local development and in the production service environment for deployment:
 
@@ -178,11 +178,11 @@ The server caches successful results for one minute, shares concurrent requests,
 
 ## Deployment and share image
 
-Production runs on the persistent DigitalOcean `apps-host`, at `https://twitch.moinax.com`. The dedicated public Caddy service serves `dist` and proxies `/api/*` to the loopback-only Node service on port 8766. Finance and Daylight use a separate private proxy and remain accessible only through Tailscale.
+Production is a Vercel project connected to `pladombrowski/stream-grid`, served at `https://stream-grid.caelmai.com`. Vercel runs `pnpm build`, serves `dist`, and exposes the files in `api/` as serverless functions for `/api/search`, `/api/stream`, `/api/extensions` and `/api/youtube`.
 
-Deploy from the dotfiles checkout with `dots hosting deploy twitch-grid`. This builds locally and transfers an explicit runtime archive without `.env.local` or browser state. The API uses only Node built-ins, so the host installs no npm dependencies. Services run as separate unprivileged users with root-owned releases. The two Twitch search credentials live in `/etc/personal-apps/twitch-grid.env`, loaded by systemd. Encrypted host backups include the release and configuration; favorites, grids and Twitch sessions remain in each browser on the unchanged origin.
+Import the repository in the Vercel dashboard, keep the Vite preset and Node.js 24, and set `TWITCH_SEARCH_CLIENT_ID` and `TWITCH_SEARCH_CLIENT_SECRET` for Production and Preview. Add `stream-grid.caelmai.com` as the project domain and create the DNS record Vercel shows; the CNAME target may be project-specific. Pushes to `main` deploy automatically; pull requests get preview deployments.
 
-Host preparation and DNS activation are separate commands in `dots hosting help`. Activation checks HTTPS and private-app isolation before creating the explicit Twitch DNS record; the public wildcard is unchanged. The former Vercel project has been deleted; recover from host release archives rather than pointing DNS back to Vercel. The standalone host does not use Vercel Analytics.
+The API uses only Node built-ins. The two Twitch search credentials stay in Vercel environment variables and are never committed. Favorites, grids and Twitch sessions remain in each browser's local storage on the production origin. The browser storage keys keep their historical `tg.` prefix, so this version and earlier versions on the same origin keep reading the same saved data. A different origin starts with empty browser storage; nothing is migrated.
 
 Open Graph and Twitter metadata remain in the HTML entry point. They reference the committed 1200 × 630 image at `public/assets/share-card.png`. Regenerate it after changing the landing hero:
 
@@ -194,6 +194,8 @@ The command starts a local server, captures the English landing hero in headless
 
 ## Origin and license
 
-Adapted from [ZEvent grid](https://github.com/Moinax/zevent-grid), retaining its Git history. Event data and counters have been removed.
+Adapted from [ZEvent grid](https://github.com/Moinax/zevent-grid), retaining its Git history, and from [Moinax/twitch-grid](https://github.com/Moinax/twitch-grid). Event data and counters have been removed.
+
+This fork is maintained at [pladombrowski/stream-grid](https://github.com/pladombrowski/stream-grid). Upstream changes are merged from `Moinax/twitch-grid`; the fork keeps the original MIT copyright notice.
 
 [MIT](LICENSE)

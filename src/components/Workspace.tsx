@@ -17,7 +17,7 @@ export function Workspace({ actions }: { actions: WorkspaceActions }) {
               <img src="favicon.svg" alt="" />
             </span>
           </span>
-          <h1 id="empty-title">Twitch grid</h1>
+          <h1 id="empty-title">Stream Grid</h1>
           <p data-i18n="">
             Ta grille est vide. Trois gestes et tes streams sont côte à côte.
           </p>

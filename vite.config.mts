@@ -36,7 +36,7 @@ export default defineConfig(({ mode }) => {
       react(),
       tailwindcss(),
       {
-        name: "twitch-search",
+        name: "stream-grid-api",
         configureServer(server) {
           installSearch(server.middlewares);
         },

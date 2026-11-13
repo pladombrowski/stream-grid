@@ -1,4 +1,4 @@
-// Caddy serves dist; this loopback-only process owns the Twitch API routes.
+// A static host serves dist; this loopback-only process owns the stream API routes.
 const { createServer } = require('node:http');
 const search = require('./api/search.js');
 const stream = require('./api/stream.js');

@@ -213,7 +213,7 @@ module.exports = async function youtube(req, res) {
     res.setHeader('Retry-After', '60');
     return fail(429, 'YOUTUBE_BUSY');
   }
-  // Caddy owns X-Forwarded-For; X-Real-IP passes through untouched and would let a client rotate identities
+  // The hosting proxy owns X-Forwarded-For; X-Real-IP passes through untouched and would let a client rotate identities
   const ip = clientKey(String(req.headers?.['x-forwarded-for'] || '').split(',')[0].trim()
     || req.socket?.remoteAddress
     || 'unknown');

@@ -12,7 +12,7 @@ test("landing and app copy is translated", async () => {
     .filter((file) => file.endsWith(".tsx"))
     .map((file) => fs.readFileSync(path.join(directory, file), "utf8"))
     .join("\n");
-  const untranslated = new Set(["Twitch grid", "GitHub", "FR", "EN", "NL"]);
+  const untranslated = new Set(["Stream Grid", "GitHub", "FR", "EN", "NL"]);
   const missing = [];
   for (const [, attr, quoted, text] of source.matchAll(
     /data-(?:i18n(-[a-z-]+)?|reveal-key)="([^"]*)"[^>]*>(?:([^<]*)<)?/g,

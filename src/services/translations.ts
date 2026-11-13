@@ -390,7 +390,7 @@ export const translations: Record<string, [string, string]> = {
     "Too many searches. Try again in a minute.",
     "Te veel zoekopdrachten. Probeer het over een minuut opnieuw.",
   ],
-  "Présentation de Twitch grid": ["About Twitch grid", "Over Twitch grid"],
+  "Présentation de Stream Grid": ["About Stream Grid", "Over Stream Grid"],
   "Aller au contenu": ["Skip to content", "Naar de inhoud"],
   Navigation: ["Navigation", "Navigatie"],
   Fonctionnalités: ["Features", "Functies"],
@@ -440,9 +440,9 @@ export const translations: Record<string, [string, string]> = {
       "Sound, volume, named grids, chat position and size: everything is saved in your browser and comes back as you left it.",
       "Geluid, volume, benoemde rasters, positie en grootte van de chat: alles wordt in je browser bewaard en komt terug zoals je het achterliet.",
     ],
-  "Twitch grid en une phrase": [
-    "Twitch grid in one sentence",
-    "Twitch grid in één zin",
+  "Stream Grid en une phrase": [
+    "Stream Grid in one sentence",
+    "Stream Grid in één zin",
   ],
   "Un stream en spotlight, les autres sous la main. Le son que tu choisis, la grille qui s’en souvient.":
     [
@@ -584,10 +584,10 @@ export const translations: Record<string, [string, string]> = {
     "Nothing to install, nothing to create",
     "Niets te installeren, niets aan te maken",
   ],
-  "Twitch grid est une page web. Elle demande le minimum et garde tout chez toi.":
+  "Stream Grid est une page web. Elle demande le minimum et garde tout chez toi.":
     [
-      "Twitch grid is a web page. It asks for the minimum and keeps everything on your side.",
-      "Twitch grid is een webpagina. Ze vraagt het minimum en houdt alles bij jou.",
+      "Stream Grid is a web page. It asks for the minimum and keeps everything on your side.",
+      "Stream Grid is een webpagina. Ze vraagt het minimum en houdt alles bij jou.",
     ],
   "Pas de compte à créer : la connexion passe par Twitch, avec la seule permission de lire tes follows.":
     [
@@ -617,9 +617,9 @@ export const translations: Record<string, [string, string]> = {
       "No. Without an account, you search a streamer by username or link and it joins your favorites, kept in this browser. With an account, your follows appear directly.",
       "Nee. Zonder account zoek je een streamer op gebruikersnaam of link en komt die bij je favorieten, bewaard in deze browser. Met een account verschijnen je follows meteen.",
     ],
-  "Que voit Twitch grid de mon compte ?": [
-    "What does Twitch grid see of my account?",
-    "Wat ziet Twitch grid van mijn account?",
+  "Que voit Stream Grid de mon compte ?": [
+    "What does Stream Grid see of my account?",
+    "Wat ziet Stream Grid van mijn account?",
   ],
   "Uniquement la liste des chaînes que tu suis. Le jeton reste dans ce navigateur jusqu’à la déconnexion ; rien n’est copié sur un serveur.":
     [
@@ -739,10 +739,10 @@ export const translations: Record<string, [string, string]> = {
   Liens: ["Links", "Links"],
   "Licence MIT": ["MIT license", "MIT-licentie"],
   Confidentialité: ["Privacy", "Privacy"],
-  "Twitch est une marque de Twitch Interactive, Inc. Twitch grid est un projet indépendant, sans lien avec Twitch.":
+  "Twitch est une marque de Twitch Interactive, Inc. Stream Grid est un projet indépendant, sans lien avec Twitch.":
     [
-      "Twitch is a trademark of Twitch Interactive, Inc. Twitch grid is an independent project, not affiliated with Twitch.",
-      "Twitch is een merk van Twitch Interactive, Inc. Twitch grid is een onafhankelijk project, niet verbonden aan Twitch.",
+      "Twitch is a trademark of Twitch Interactive, Inc. Stream Grid is an independent project, not affiliated with Twitch.",
+      "Twitch is een merk van Twitch Interactive, Inc. Stream Grid is een onafhankelijk project, niet verbonden aan Twitch.",
     ],
   "Ouvrir sur YouTube ↗": ["Open on YouTube ↗", "Openen op YouTube ↗"],
   "Chaîne YouTube": ["YouTube channel", "YouTube-kanaal"],

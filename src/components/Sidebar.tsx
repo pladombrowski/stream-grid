@@ -6,7 +6,7 @@ export function Sidebar({ actions }: { actions: WorkspaceActions }) {
         <header>
           <div className="row">
             <img src="favicon.svg" width="20" height="20" alt="" />
-            <b>Twitch grid</b>
+            <b>Stream Grid</b>
             <div id="ctl">
               <button
                 id="grids-shortcut"

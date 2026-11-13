@@ -5,7 +5,7 @@ export function Landing({ actions }: { actions: WorkspaceActions }) {
     <>
       <section
         id="landing"
-        aria-label="Présentation de Twitch grid"
+        aria-label="Présentation de Stream Grid"
         data-i18n-aria-label=""
       >
         <a className="skip" href="#landing-main" data-i18n="">
@@ -14,7 +14,7 @@ export function Landing({ actions }: { actions: WorkspaceActions }) {
         <nav className="island" aria-label="Navigation" data-i18n-aria-label="">
           <a className="brand" href="#landing-main" aria-current="page">
             <img src="favicon.svg" width="24" height="24" alt="" />
-            <b>Twitch grid</b>
+            <b>Stream Grid</b>
           </a>
           <a className="anchor" href="#features" data-i18n="">
             Fonctionnalités
@@ -167,7 +167,7 @@ export function Landing({ actions }: { actions: WorkspaceActions }) {
 
           <section
             className="tagline"
-            aria-label="Twitch grid en une phrase"
+            aria-label="Stream Grid en une phrase"
             data-i18n-aria-label=""
           >
             <p
@@ -587,7 +587,7 @@ export function Landing({ actions }: { actions: WorkspaceActions }) {
               Rien à installer, rien à créer
             </h2>
             <p className="sub" data-i18n="">
-              Twitch grid est une page web. Elle demande le minimum et garde
+              Stream Grid est une page web. Elle demande le minimum et garde
               tout chez toi.
             </p>
             <ul className="checks">
@@ -623,7 +623,7 @@ export function Landing({ actions }: { actions: WorkspaceActions }) {
               </details>
               <details className="qa">
                 <summary data-i18n="">
-                  Que voit Twitch grid de mon compte ?
+                  Que voit Stream Grid de mon compte ?
                 </summary>
                 <p data-i18n="">
                   Uniquement la liste des chaînes que tu suis. Le jeton reste
@@ -743,18 +743,18 @@ export function Landing({ actions }: { actions: WorkspaceActions }) {
           <footer className="foot">
             <a className="brand" href="#landing-main">
               <img src="favicon.svg" width="20" height="20" alt="" />
-              <b>Twitch grid</b>
+              <b>Stream Grid</b>
             </a>
             <nav aria-label="Liens" data-i18n-aria-label="">
               <a
-                href="https://github.com/Moinax/twitch-grid"
+                href="https://github.com/pladombrowski/stream-grid"
                 target="_blank"
                 rel="noopener"
               >
                 GitHub
               </a>
               <a
-                href="https://github.com/Moinax/twitch-grid/blob/main/LICENSE"
+                href="https://github.com/pladombrowski/stream-grid/blob/main/LICENSE"
                 target="_blank"
                 rel="noopener"
                 data-i18n=""
@@ -766,7 +766,7 @@ export function Landing({ actions }: { actions: WorkspaceActions }) {
               </a>
             </nav>
             <p className="legal" data-i18n="">
-              Twitch est une marque de Twitch Interactive, Inc. Twitch grid est
+              Twitch est une marque de Twitch Interactive, Inc. Stream Grid est
               un projet indépendant, sans lien avec Twitch.
             </p>
           </footer>
