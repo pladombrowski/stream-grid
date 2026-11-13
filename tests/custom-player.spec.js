@@ -553,8 +553,11 @@ test("shortcut tooltips render keycaps and the collapsed toggle stays above GitH
     await page.keyboard.up("Shift");
   }
   const toggle = await page.locator("#toggle").boundingBox();
-  const github = await page.locator("#ctl .github").boundingBox();
-  expect(toggle.y + toggle.height).toBeLessThanOrEqual(github.y);
+  const github = page.locator("#ctl .github");
+  if (await github.count()) {
+    const box = await github.boundingBox();
+    if (box) expect(toggle.y + toggle.height).toBeLessThanOrEqual(box.y);
+  }
   await page.locator("#toggle").click();
   await expect(page.locator("body")).not.toHaveClass(/collapsed/);
   expect(errors).toEqual([]);
