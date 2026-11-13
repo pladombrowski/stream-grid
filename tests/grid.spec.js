@@ -472,6 +472,10 @@ test('removing the second tile keeps a saved spotlight without recreating the re
   await expect(page.locator('#grid .spotlight')).toHaveAttribute('aria-pressed', 'true');
   expect(await page.evaluate(() => tiles.get('one').player === window.singlePlayer)).toBe(true);
   expect(await page.evaluate(() => JSON.parse(localStorage.getItem('tg.layout.guest')).focused)).toBe('one');
+  // a lone spotlight has no grid to go back to: its cross removes it at once
+  await expect(page.locator('#grid [data-login="one"] .close')).toHaveAttribute('aria-label', 'Retirer');
+  await page.locator('#grid [data-login="one"] .close').click();
+  await expect(page.locator('#grid .tile')).toHaveCount(0);
 });
 test('the spotlight button and a click on a small tile bring one stream in front with the sound', async ({ page }) => {
   const errors = await setup(page); await page.goto('/');
@@ -509,8 +513,12 @@ test('the spotlight button and a click on a small tile bring one stream in front
   await page.keyboard.press('Escape');
   expect(await page.evaluate(() => ({ focused, muted: [...tiles.values()].map(t => t.muted) }))).toEqual({ focused: null, muted: [true, true, true, true] });
   await expect(page.locator('#grid .tile iframe[data-controls="false"]')).toHaveCount(4);
-  // removing the spotlight itself clears the front
+  // the spotlight's cross only sends it back to the grid; once there, the cross removes it
   await one.hover(); await one.locator('.spotlight').click();
+  await expect(one.locator('.close')).toHaveAttribute('aria-label', 'Revenir à la grille');
+  await one.locator('.close').click();
+  expect(await page.evaluate(() => ({ focused, count: tiles.size }))).toEqual({ focused: null, count: 4 });
+  await expect(one.locator('.close')).toHaveAttribute('aria-label', 'Retirer');
   await one.locator('.close').click();
   expect(await page.evaluate(() => ({ focused, count: tiles.size }))).toEqual({ focused: null, count: 3 });
   expect(errors).toEqual([]);
@@ -665,6 +673,19 @@ test('a pointer drag scrolls the tile column and stops scrolling when cancelled'
   expect(errors).toEqual([]);
 });
 
+test('a wide grid shows every small tile beside the spotlight', async ({ page }) => {
+  const errors = await setup(page);
+  await page.setViewportSize({ width: 2000, height: 870 });
+  await page.addInitScript(() => localStorage.setItem('tg.layout.guest', JSON.stringify({ order: ['one', 'two', 'three', 'four', 'five'], focused: 'one', collapsed: true })));
+  await page.goto('/');
+  await expect(page.locator('#grid')).not.toHaveClass(/below/);
+  const gridBox = await page.locator('#grid').boundingBox();
+  for (const login of ['two', 'three', 'four', 'five']) {
+    const b = await page.locator(`#grid [data-login="${login}"]`).boundingBox();
+    expect(b.y + b.height).toBeLessThanOrEqual(gridBox.y + gridBox.height + 1);
+  }
+  expect(errors).toEqual([]);
+});
 test('a portrait grid keeps the small tiles in a strip under the front row', async ({ page }) => {
   const errors = await setup(page);
   await page.addInitScript(() => localStorage.setItem('tg.layout.guest', JSON.stringify({ order: ['one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten', 'eleven'], focused: 'one', collapsed: true })));
@@ -687,6 +708,224 @@ test('a portrait grid keeps the small tiles in a strip under the front row', asy
   await page.setViewportSize({ width: 1280, height: 720 });
   await expect(page.locator('#grid')).not.toHaveClass(/below/);
   await expect.poll(async () => { const a = await one.boundingBox(), b = await two.boundingBox(); return b.x > a.x + a.width && b.y < a.y + 1; }).toBe(true);
+  expect(errors).toEqual([]);
+});
+const spotlightGrid = (page, order, preferences = {}) => page.addInitScript(({ order, preferences }) => {
+  if (localStorage.getItem('tg.layout.guest')) return;
+  localStorage.setItem('tg.layout.guest', JSON.stringify({ order, focused: order[0], collapsed: true }));
+  localStorage.setItem('tg.preferences', JSON.stringify({ ...JSON.parse(localStorage.getItem('tg.preferences')), ...preferences }));
+}, { order, preferences });
+const storedPreferences = page => page.evaluate(() => JSON.parse(localStorage.getItem('tg.preferences')));
+const manyStreams = Array.from({ length: 12 }, (_, i) => `stream${i}`);
+test('the spotlight menu docks the small tiles on any side and Auto restores the layout', async ({ page }) => {
+  const errors = await setup(page);
+  await page.setViewportSize({ width: 1600, height: 1000 });
+  await spotlightGrid(page, ['one', 'two', 'three', 'four', 'five']);
+  await page.goto('/'); await readyPlayers(page);
+  const big = page.locator('#grid .tile.big'), small = page.locator('#grid [data-login="two"]');
+  const autoBox = await big.boundingBox();
+  await expect(small.locator('.tiles-options')).toBeHidden();
+  await page.evaluate(() => { window.spotlightPlayer = tiles.get('one').player; });
+  await big.locator('.tiles-options summary').click();
+  await expect(big.locator('[data-tiles-position="auto"]')).toHaveAttribute('aria-pressed', 'true');
+  for (const position of ['top', 'left', 'right', 'bottom']) {
+    await big.locator(`[data-tiles-position="${position}"]`).click();
+    await expect(big.locator(`[data-tiles-position="${position}"]`)).toHaveAttribute('aria-pressed', 'true');
+    await expect(page.locator('#grid')).toHaveAttribute('data-tiles-side', position);
+    const a = await big.boundingBox(), b = await small.boundingBox();
+    if (position === 'top') expect(b.y + b.height).toBeLessThanOrEqual(a.y + 1);
+    if (position === 'bottom') expect(b.y).toBeGreaterThanOrEqual(a.y + a.height - 1);
+    if (position === 'left') expect(b.x + b.width).toBeLessThanOrEqual(a.x + 1);
+    if (position === 'right') expect(b.x).toBeGreaterThanOrEqual(a.x + a.width - 1);
+    expect((await storedPreferences(page)).spotlightTiles).toBe(position);
+    // the divider must not count as covering a video, or Twitch's embed reports it as obscured
+    await big.locator('.tiles-options summary').click();
+    await page.mouse.move(0, 0);
+    const visible = await page.evaluate(() => Promise.all([...document.querySelectorAll('#grid iframe')].map(frame => new Promise(resolve => {
+      const observer = new IntersectionObserver(([entry]) => { observer.disconnect(); resolve(entry.isVisible); }, { threshold: 1, trackVisibility: true, delay: 100 });
+      observer.observe(frame);
+    }))));
+    expect(visible.length).toBe(5);
+    expect(visible).not.toContain(false);
+    await big.locator('.tiles-options summary').click();
+  }
+  await big.locator('[data-tiles-position="auto"]').click();
+  expect(await big.boundingBox()).toEqual(autoBox);
+  expect(await page.evaluate(() => tiles.get('one').player === window.spotlightPlayer)).toBe(true);
+  expect((await storedPreferences(page)).spotlightTiles).toBe('auto');
+  await page.keyboard.press('Escape');
+  await expect(big.locator('.tiles-menu')).toBeHidden();
+  expect(errors).toEqual([]);
+});
+test('dragging the divider sizes the small tiles, pins their side and survives a reload', async ({ page }) => {
+  const errors = await setup(page);
+  await page.setViewportSize({ width: 1400, height: 1000 });
+  await spotlightGrid(page, manyStreams);
+  await page.goto('/'); await readyPlayers(page);
+  const grid = page.locator('#grid'), big = page.locator('#grid .tile.big'), handle = page.locator('.spotlight-resize');
+  await expect(grid).toHaveAttribute('data-tiles-side', 'bottom');
+  const before = await big.boundingBox(), second = await page.locator('#grid .tile:not(.big)').first().boundingBox();
+  await page.evaluate(() => { window.spotlightPlayer = tiles.get('stream0').player; });
+  const grip = await handle.boundingBox();
+  expect(grip.y).toBeCloseTo(before.y + before.height, 0);
+  expect(grip.y + grip.height).toBeLessThanOrEqual(second.y + 34); // no further than the bars, clear of every iframe
+  await page.mouse.move(grip.x + grip.width / 2, grip.y + grip.height / 2);
+  await page.mouse.down();
+  await expect(page.locator('#main')).toHaveClass(/resizing-chat/);
+  await page.mouse.move(grip.x + grip.width / 2, grip.y + grip.height / 2 - 200, { steps: 8 });
+  await page.mouse.up();
+  await expect(page.locator('#main')).not.toHaveClass(/resizing-chat/);
+  const after = await big.boundingBox(), stored = await storedPreferences(page);
+  expect(after.height).toBeLessThan(before.height - 150);
+  expect(stored.spotlightTiles).toBe('bottom'); // Auto cannot move a band sized by hand
+  expect(stored.spotlightTilesSize.vertical).toBeGreaterThan(0);
+  expect(await page.evaluate(() => tiles.get('stream0').player === window.spotlightPlayer)).toBe(true);
+  // the divider stays on the seam after the drag, and the size comes back with the page
+  expect((await handle.boundingBox()).y).toBeCloseTo(after.y + after.height, 0);
+  await page.reload(); await readyPlayers(page);
+  await expect(grid).toHaveAttribute('data-tiles-side', 'bottom');
+  expect((await big.boundingBox()).height).toBeCloseTo(after.height, 0);
+  // the keyboard moves it, Home and End reach its limits
+  await handle.focus();
+  const now = Number(await handle.getAttribute('aria-valuenow'));
+  await page.keyboard.press('ArrowUp');
+  await expect.poll(async () => Number(await handle.getAttribute('aria-valuenow'))).toBeGreaterThan(now);
+  await page.keyboard.press('End');
+  await expect(handle).toHaveAttribute('aria-valuenow', await handle.getAttribute('aria-valuemax'));
+  expect((await big.boundingBox()).width).toBeGreaterThanOrEqual(640 - 1);
+  await page.keyboard.press('Home');
+  await expect(handle).toHaveAttribute('aria-valuenow', await handle.getAttribute('aria-valuemin'));
+  // a double click gives the size back and keeps the side
+  const sized = await big.boundingBox();
+  await handle.dblclick();
+  expect((await storedPreferences(page)).spotlightTilesSize.vertical).toBeUndefined();
+  expect((await storedPreferences(page)).spotlightTiles).toBe('bottom');
+  expect(await big.boundingBox()).not.toEqual(sized);
+  // Auto hands back the side and every size at once
+  await handle.focus(); await page.keyboard.press('ArrowUp');
+  await big.locator('.tiles-options summary').click();
+  await expect(big.locator('.tiles-size-reset')).toBeVisible();
+  await big.locator('[data-tiles-position="auto"]').click();
+  const reset = await storedPreferences(page);
+  expect(reset.spotlightTiles).toBe('auto');
+  expect(reset.spotlightTilesSize).toEqual({});
+  expect((await big.boundingBox()).height).toBeCloseTo(before.height, 0);
+  expect(errors).toEqual([]);
+});
+for (const position of ['top', 'left']) test(`tiles docked ${position} scroll clear of the spotlight`, async ({ page }) => {
+  const errors = await setup(page);
+  await page.setViewportSize({ width: 1400, height: 1000 });
+  await spotlightGrid(page, [...manyStreams, ...manyStreams.map(login => login + 'b')], { spotlightTiles: position });
+  await page.goto('/'); await readyPlayers(page);
+  const big = page.locator('#grid .tile.big'), box = await page.locator('#grid').boundingBox();
+  await page.evaluate(() => { grid.scrollTop = grid.scrollHeight; });
+  expect(await page.evaluate(() => grid.scrollTop)).toBeGreaterThan(0);
+  const a = await big.boundingBox(), last = await page.locator('#grid .tile:not(.big)').last().boundingBox();
+  if (position === 'top') expect(last.y + last.height).toBeLessThanOrEqual(a.y + 1);
+  else {
+    expect(last.x + last.width).toBeLessThanOrEqual(a.x + 1);
+    expect(last.y + last.height).toBeLessThanOrEqual(box.y + box.height + 1);
+  }
+  expect(a.x + a.width).toBeLessThanOrEqual(box.x + box.width + 1);
+  expect(a.y + a.height).toBeLessThanOrEqual(box.y + box.height + 1);
+  expect(errors).toEqual([]);
+});
+test('the divider snaps under the pointer only, and a click leaves Auto alone', async ({ page }) => {
+  const errors = await setup(page);
+  await page.setViewportSize({ width: 1700, height: 1280 });
+  await spotlightGrid(page, ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k']);
+  await page.goto('/'); await readyPlayers(page);
+  const handle = page.locator('.spotlight-resize'), box = await page.locator('#grid').boundingBox();
+  const center = async () => { const b = await handle.boundingBox(); return { x: b.x + b.width / 2, y: b.y + b.height / 2 }; };
+  // a click and a double click with a shaky hand are not a resize
+  let at = await center();
+  await page.mouse.move(at.x, at.y);
+  await page.mouse.down(); await page.mouse.move(at.x, at.y + 1); await page.mouse.up();
+  await handle.dblclick();
+  expect((await storedPreferences(page)).spotlightTiles).toBe('auto');
+  // two rows of five fill the strip exactly: a drag a few pixels off lands on that size, further away it does not
+  const snap = 2 * ((box.width - 8) / 5 * 9 / 16 + 34 + 2);
+  const dragTo = async band => {
+    at = await center();
+    await page.mouse.move(at.x, at.y);
+    await page.mouse.down();
+    await page.mouse.move(at.x, box.y + box.height - band, { steps: 4 });
+    await page.mouse.up();
+    return (await storedPreferences(page)).spotlightTilesSize.vertical * box.height;
+  };
+  expect(await dragTo(snap + 9)).toBeCloseTo(snap, 1);
+  expect(await dragTo(snap + 40)).toBeGreaterThan(snap + 30);
+  // the menu's Auto size hands the size back, and the side stays
+  const big = page.locator('#grid .tile.big');
+  await big.locator('.tiles-options summary').click();
+  await big.locator('.tiles-size-reset').click();
+  await expect(big.locator('.tiles-size-reset')).toBeHidden();
+  const stored = await storedPreferences(page);
+  expect(stored.spotlightTilesSize.vertical).toBeUndefined();
+  expect(stored.spotlightTiles).toBe('bottom');
+  expect(errors).toEqual([]);
+});
+test('arrow keys step off a snap point even when the step is smaller than its radius', async ({ page }) => {
+  const errors = await setup(page);
+  await page.setViewportSize({ width: 1700, height: 640 });
+  const width = 1700 - 48, snap = (width - 8) / 5 * 9 / 16 + 34 + 2;
+  await spotlightGrid(page, ['a', 'b', 'c', 'd', 'e', 'f'], { spotlightTiles: 'bottom', spotlightTilesSize: { vertical: snap / 640 } });
+  await page.goto('/'); await readyPlayers(page);
+  const handle = page.locator('.spotlight-resize');
+  await handle.focus();
+  const before = Number(await handle.getAttribute('aria-valuenow'));
+  await page.keyboard.press('ArrowDown');
+  await expect.poll(async () => Number(await handle.getAttribute('aria-valuenow'))).toBeLessThan(before);
+  expect(errors).toEqual([]);
+});
+test('an expanded spotlight keeps its layer and hides the divider', async ({ page }) => {
+  const errors = await setup(page);
+  await page.setViewportSize({ width: 1400, height: 900 });
+  await spotlightGrid(page, ['one', 'two', 'three']);
+  await page.goto('/'); await readyPlayers(page);
+  const big = page.locator('#grid .tile.big'), handle = page.locator('.spotlight-resize');
+  await expect(handle).toBeVisible();
+  await big.locator('.fs').click();
+  await expect(big).toHaveClass(/expanded/);
+  await expect(handle).toBeHidden();
+  await big.locator('.chat-options summary').click();
+  expect(await big.evaluate(el => getComputedStyle(el).zIndex)).toBe('20');
+  expect(errors).toEqual([]);
+});
+test('the settings choose the side, and the spotlight keeps its full player width at the divider\'s limit', async ({ page }) => {
+  const errors = await setup(page);
+  await page.setViewportSize({ width: 1400, height: 900 });
+  await spotlightGrid(page, ['one', 'two', 'three', 'four', 'five']);
+  await page.goto('/'); await readyPlayers(page);
+  await page.locator('#settings').click();
+  await page.locator('#spotlight-tiles-setting').selectOption('left');
+  await expect(page.locator('#grid')).toHaveAttribute('data-tiles-side', 'left');
+  expect((await storedPreferences(page)).spotlightTiles).toBe('left');
+  await page.keyboard.press('Escape');
+  const handle = page.locator('.spotlight-resize');
+  await handle.focus();
+  await page.keyboard.press('End');
+  await expect(handle).toHaveAttribute('aria-valuenow', await handle.getAttribute('aria-valuemax'));
+  expect((await page.locator('#grid .tile.big').boundingBox()).width).toBeGreaterThanOrEqual(640);
+  expect(errors).toEqual([]);
+});
+test('a pinned side too wide for the window falls back to Auto and returns with the room', async ({ page }) => {
+  const errors = await setup(page);
+  await page.setViewportSize({ width: 800, height: 700 });
+  await spotlightGrid(page, ['one', 'two', 'three', 'four'], { spotlightTiles: 'left', spotlightTilesSize: { horizontal: 0.3 } });
+  await page.goto('/'); await readyPlayers(page);
+  await expect(page.locator('#grid')).not.toHaveAttribute('data-tiles-side', 'left');
+  await page.setViewportSize({ width: 1600, height: 900 });
+  await expect(page.locator('#grid')).toHaveAttribute('data-tiles-side', 'left');
+  const box = await page.locator('#grid').boundingBox();
+  await expect.poll(async () => ((await page.locator('.spotlight-resize').boundingBox()).x - box.x) / box.width).toBeCloseTo(0.3, 2);
+  // a corrupt size in storage is ignored
+  await page.evaluate(() => {
+    const stored = JSON.parse(localStorage.getItem('tg.preferences'));
+    localStorage.setItem('tg.preferences', JSON.stringify({ ...stored, spotlightTiles: 'nowhere', spotlightTilesSize: { horizontal: 'wide', vertical: 7 } }));
+  });
+  await page.reload(); await readyPlayers(page);
+  await expect(page.locator('#spotlight-tiles-setting')).toHaveValue('auto');
   expect(errors).toEqual([]);
 });
 test('Shift and the follow button temporarily release global mute', async ({ page }) => {
@@ -885,24 +1124,29 @@ test('clearing empties an unlocked grid and stays out of reach otherwise', async
   await expect(page.locator('#grid .tile')).toHaveCount(0);
   expect(errors).toEqual([]);
 });
-test('a miniature plays and pauses on click and fullscreens on double click', async ({ page }) => {
+test('a miniature comes in front or resumes on click and fullscreens on double click', async ({ page }) => {
   const errors = await setup(page);
   await page.route('**/api/search?**', r => r.fulfill({ json: { data: ['one', 'two'].map(broadcaster_login => ({ broadcaster_login, is_live: true })) } }));
   await page.addInitScript(() => localStorage.setItem('tg.layout.guest', JSON.stringify({ order: ['one', 'two'] })));
   await page.goto('/');
   const tile = page.locator('#grid [data-login="two"]'), player = tile.locator('.player');
   await expect(tile).not.toHaveClass(/full-player/);
-  await player.click();   // the surface only resumes: a playing tile stays as it is
+  await player.click();   // a playing tile comes in front, and its cross only sends it back
+  await expect.poll(() => page.evaluate(() => focused)).toBe('two');
   await expect(tile.locator('.bar .pp')).toHaveAttribute('aria-pressed', 'false');
+  await tile.locator('.bar .close').click();
+  expect(await page.evaluate(() => ({ focused, count: tiles.size }))).toEqual({ focused: null, count: 2 });
   await tile.hover(); await tile.locator('.bar .pp').click();
   await expect(tile.locator('.bar .pp')).toHaveAttribute('aria-pressed', 'true');
   expect(await page.evaluate(() => tiles.get('two').paused)).toBe(true);
-  await player.click();
+  await player.click();   // a paused tile only resumes
   await expect(tile.locator('.bar .pp')).toHaveAttribute('aria-pressed', 'false');
-  // the double click fullscreens the tile instead of toggling playback twice
+  // the double click fullscreens the tile instead of toggling playback twice, or bringing it in front
   await player.dblclick();
   await expect.poll(() => page.evaluate(() => document.fullscreenElement?.dataset.login)).toBe('two');
   await expect(tile.locator('.bar .pp')).toHaveAttribute('aria-pressed', 'false');
+  await page.waitForTimeout(300);
+  expect(await page.evaluate(() => focused)).toBeNull();
   await player.dblclick();
   await expect.poll(() => page.evaluate(() => !!document.fullscreenElement)).toBe(false);
   expect(errors).toEqual([]);
@@ -1250,7 +1494,9 @@ for (const connected of [false, true]) test(`stream metadata follows focus, hove
   await expect(small.locator('.stream-info')).toHaveCSS('backdrop-filter', 'none');
   await page.locator('#toggle').hover();
   await expect(small.locator('.stream-info')).toBeVisible();
+  await readyPlayers(page); // the player mounts a moment after the status: captured before that, the comparison below proves nothing
   await page.evaluate(() => { window.metadataPlayer = tiles.get('one').player; });
+  expect(await page.evaluate(() => !!window.metadataPlayer)).toBe(true);
   title = 'Nouveau titre'; game = 'Just Chatting';
   await page.evaluate(() => refresh());
   await expect(big.locator('.stream-title')).toHaveText(title);
@@ -1390,6 +1636,38 @@ for (const connected of [false, true]) test(`live notifications track transition
   expect(errors).toEqual([]);
 });
 
+
+test('the Live follows grid tells which stream joined it, and the toast brings it in front', async ({ page }) => {
+  const errors = await setup(page, true); await api(page);
+  const online = new Set(['already']);
+  await page.route('https://api.twitch.tv/helix/channels/followed?**', route => route.fulfill({json:{
+    data:['already','newlive','later'].map(login=>({broadcaster_login:login,broadcaster_name:login})),pagination:{}
+  }}));
+  await page.route('https://api.twitch.tv/helix/streams?**', route => route.fulfill({json:{data:[...online].map(login => ({user_login:login,game_name:'Art',title:'A new stream',viewer_count:42}))}}));
+  await page.addInitScript(() => {
+    sessionStorage.setItem('tg.session',JSON.stringify('valid'));
+    localStorage.setItem('tg.grids.connected',JSON.stringify({activeId:'live-follows',items:[{id:'default',layout:{order:[]}},{id:'live-follows',layout:{order:[],locked:true}}]}));
+  });
+  await page.goto('/');
+  await expect(page.locator('#grid .tile')).toHaveCount(1);
+  await expect(page.locator('.live-notification')).toHaveCount(0);   // the streams live at load stay quiet
+  online.add('newlive');
+  await page.evaluate(() => refresh());
+  await expect(page.locator('#grid .tile')).toHaveCount(2);   // the grid takes the stream on its own
+  const toast = page.locator('.live-notification[data-login="newlive"]');
+  await expect(toast.locator('small')).toHaveText('Ajouté à la grille');
+  await page.evaluate(() => refresh());
+  await expect(page.locator('.live-notification')).toHaveCount(1);   // a refresh keeps it
+  await toast.locator('.watch').click();
+  await expect(page.locator('#grid [data-login="newlive"]')).toHaveClass(/big/);
+  await expect(page.locator('.live-notification')).toHaveCount(0);
+  online.add('later');
+  await page.evaluate(() => refresh());
+  await expect(page.locator('.live-notification')).toHaveCount(1);
+  await page.evaluate(() => switchNamedGrid('default'));   // the toast belongs to the grid it was raised in
+  await expect(page.locator('.live-notification')).toHaveCount(0);
+  expect(errors).toEqual([]);
+});
 
 for (const gesture of ['background', 'button', 'keyboard']) test(`reload audio overlay resumes all requested sounds with ${gesture}`, async ({ page }) => {
   const errors=await setup(page); await page.clock.install();
@@ -2116,7 +2394,7 @@ test('live follows grid locks membership, plays at nine and removes offline tile
     lastLiveStatus.set('live0',false); updateLiveNotifications(follows);
     const t=tiles.get('live0'); t.channel.online=false; trackOnline(t,false);
   });
-  await expect(page.locator('.live-notification')).toHaveCount(0);
+  await expect(page.locator('.live-notification small')).toHaveText('Ajouté à la grille');   // the grid took the stream, the toast says so
   // Keep network polling from replacing the fixture during the grace period.
   await page.evaluate(() => { refreshInFlight=true; });
   await page.clock.fastForward(59000);
@@ -3000,6 +3278,41 @@ test('spotlight chat defaults allow tile overrides and settings replace them', a
   expect(errors).toEqual([]);
 });
 
+test('the tile header counts the time since the stream started, until it ends', async ({ page }) => {
+  const now = Date.UTC(2026, 0, 1, 12), elapsed = (2 * 3600 + 5 * 60 + 9) * 1000;
+  let online = true;
+  const errors = await setup(page);
+  await page.setViewportSize({ width: 1800, height: 1000 });
+  await page.route('**/api/search?**', route => route.fulfill({ json: { data: ['one', 'two'].map(login => ({
+    broadcaster_login: login, display_name: login, is_live: online, viewer_count: 42,
+    started_at: online ? new Date(now - elapsed).toISOString() : '',
+  })) } }));
+  await page.addInitScript(() => localStorage.setItem('tg.layout.guest', JSON.stringify({ order: ['one', 'two'], focused: 'one' })));
+  await page.clock.setFixedTime(new Date(now));
+  await page.goto('/');
+  const uptime = page.locator('#grid .big .uptime');
+  await expect(uptime).toHaveText('2:05:09');
+  const small = page.locator('#grid .tile:not(.big)');
+  await small.evaluate(el => { el.style.width = '350px'; });
+  await expect(small.locator('.uptime')).toBeHidden();
+  await page.clock.setFixedTime(new Date(now + 60000));
+  await expect(uptime).toHaveText('2:06:09');
+  await page.clock.setFixedTime(new Date(now - 3 * 3600000));
+  await expect(uptime).toHaveText('0:00:00');
+  const viewers = page.locator('#grid .big .viewers');
+  const viewersIcon = () => viewers.evaluate(el => getComputedStyle(el, '::before').content);
+  expect(await viewersIcon()).not.toBe('none');
+  await page.evaluate(() => tiles.get('one').player.emit('offline'));
+  await expect(uptime).toBeHidden();
+  await expect(viewers).toHaveText('Hors ligne');
+  expect(await viewersIcon()).toBe('none');
+  online = false;
+  await expect.poll(() => page.evaluate(() => refreshInFlight)).toBe(false);
+  await page.evaluate(() => refresh());
+  await expect(small.locator('.uptime')).toHaveAttribute('hidden', '');
+  expect(errors).toEqual([]);
+});
+
 test('the sidebar order follows viewers, watch time or stream start', async ({ page }) => {
   const hour = 3600000, now = Date.UTC(2026, 0, 1, 12);
   const channels = {
@@ -3292,6 +3605,10 @@ test('a YouTube live joins the grid with its chat and survives a reload', async 
   const row = page.locator('#list [data-login="yt:ytlive00001"]');
   await expect(row).toBeVisible();
   await expect(row.locator('.platform')).toHaveText('YouTube');
+  // A YouTube row never opens the Twitch preview card; the controller also excludes YouTube.
+  await row.hover();
+  await page.waitForTimeout(600);
+  await expect(page.locator('#preview')).toBeHidden();
   await row.locator('.channel').click();
   const tile = page.locator('#grid [data-login="yt:ytlive00001"]');
   await expect(tile).toHaveCount(1);

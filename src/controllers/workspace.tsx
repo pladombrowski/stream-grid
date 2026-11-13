@@ -4,7 +4,7 @@ import { WordReveal } from "../components/WordReveal";
 import { watchForUpdates } from "./updates";
 import { syncPlayerTooltips } from "./tooltips";
 import { createPreviewController } from "./preview";
-import { setupChatResize } from "./chatResize";
+import { setupChatResize, setupResizeHandle } from "./chatResize";
 import { fit, layoutChat, nameFrame, previewImageURL } from "./videoLayout";
 import { createLifecycle } from "./lifecycle";
 import type {
@@ -32,6 +32,7 @@ import {
   translateTree,
   relocalizeMessage,
   setPreference,
+  setSpotlightTiles,
 } from "../services/preferences";
 import {
   channel,
@@ -64,6 +65,12 @@ import {
   openExtensionWindow,
 } from "../services/extensionWindows";
 import { credit, decayed, type WatchEntry } from "../services/watchtime";
+
+function formatUptime(elapsed: number) {
+  const seconds = Math.max(0, Math.floor(elapsed / 1000)), // a viewer's clock can sit behind Twitch's
+    pad = (value: number) => String(value).padStart(2, "0");
+  return `${Math.floor(seconds / 3600)}:${pad(Math.floor(seconds / 60) % 60)}:${pad(seconds % 60)}`;
+}
 
 export function startWorkspace(
   views: WorkspaceViews,
@@ -103,7 +110,8 @@ export function startWorkspace(
     dragging: string | null = null,
     allPaused = false,
     restored = false,
-    layoutMode: AccountMode | null = null;
+    layoutMode: AccountMode | null = null,
+    spotlightClick: ReturnType<typeof setTimeout> | undefined;
   const collaborations = new Map<string, Collaboration>();
 
   // everything needed to come back to the same screen: tile order, zoom, global pause, sidebar, per-tile mute
@@ -172,8 +180,6 @@ export function startWorkspace(
   }
   function syncLiveGrid() {
     if (!restored || !isLiveGrid()) return;
-    for (const login of liveNotifications.keys())
-      dismissLiveNotification(login);
     if (liveLayoutToRestore && !lastFollows) return; // Wait for the first verified list before restoring saved settings.
     const live = follows.filter((s) => s.online);
     batching = true;
@@ -496,7 +502,7 @@ export function startWorkspace(
   function closeTileMenus(returnFocus = false, except: Element | null = null) {
     let closed = false;
     for (const menu of document.querySelectorAll<HTMLDetailsElement>(
-      ".chat-options[open], .collaboration[open], .extensions[open], .custom-quality[open], #grid-switcher[open], #list-order-menu[open]",
+      ".chat-options[open], .tiles-options[open], .collaboration[open], .extensions[open], .custom-quality[open], #grid-switcher[open], #list-order-menu[open]",
     )) {
       if (menu === except) continue;
       menu.open = false;
@@ -509,7 +515,7 @@ export function startWorkspace(
     closeTileMenus(
       false,
       (e.target as Element).closest(
-        ".chat-options, .collaboration, .extensions, .custom-quality, #grid-switcher, #list-order-menu",
+        ".chat-options, .tiles-options, .collaboration, .extensions, .custom-quality, #grid-switcher, #list-order-menu",
       ),
     ),
   );
@@ -1076,7 +1082,11 @@ export function startWorkspace(
     side: $("#side"),
     list,
     getChannels: () => streamers,
-    audible: () => !!soundFollow && !mutedAll,
+    // only a held Shift gives the card its sound, a plain hover keeps it quiet
+    audible: () =>
+      document.body.classList.contains("shift-spotlight") &&
+      !!soundFollow &&
+      !mutedAll,
     lifecycle,
   });
   const {
@@ -1086,6 +1096,7 @@ export function startWorkspace(
     previewInfo,
     queuePreview,
     leavePreview,
+    syncPreviewSound,
   } = previewController;
   // The sidebar spotlight works like Twitch: a lone tile gives its place to the newcomer, a grid keeps its tiles and
   // puts the newcomer in front.
@@ -1168,8 +1179,11 @@ export function startWorkspace(
       void refreshExtensions(t);
     }
     t.bar.querySelector<HTMLImageElement>(".stream-avatar")!.src = s.profileUrl;
-    t.bar.querySelector<HTMLElement>(".viewers")!.textContent =
+    const viewerCount = t.bar.querySelector<HTMLElement>(".viewers")!;
+    viewerCount.textContent =
       s.online === false ? tr("Hors ligne") : s.viewersAmount.formatted;
+    viewerCount.classList.toggle("off", s.online === false);
+    paintUptime(t);
     const info = t.bar.querySelector<HTMLElement>(".stream-info")!;
     const game = s.online === false ? "" : s.game,
       title = s.online === false ? "" : s.title;
@@ -1220,6 +1234,13 @@ export function startWorkspace(
     el.dataset.login = s.twitch;
     el.dataset.platform = s.platform || "twitch";
     el.dataset.playerMode = isYouTubeChannel(s) ? "embed" : preferences.player;
+    const resume = () => {
+      if (allPaused || tilePaused(t)) {
+        resumeTile(t);
+        sync(t);
+        save();
+      }
+    };
     const togglePause = () => {
       if (t.channel.online === false) return;
       t.nativeHold = false;
@@ -1246,19 +1267,40 @@ export function startWorkspace(
         onPause={togglePause}
         onPlayerToggle={() => togglePlayer(t)}
         onPlayerFullscreen={() => {
+          clearTimeout(spotlightClick);
           if (document.fullscreenElement) void document.exitFullscreen();
           else void t.el.requestFullscreen();
         }}
         onVolume={(value) => setVolume(t, value)}
         onSound={() => toggleSound(t)}
-        onResume={() => {
-          if (allPaused || tilePaused(t)) {
-            resumeTile(t);
-            sync(t);
-            save();
-          }
+        onResume={resume}
+        onPlayerClick={(event) => {
+          clearTimeout(spotlightClick);
+          if (allPaused || tilePaused(t)) return resume();
+          // A click on the video brings it in front, once the double click that goes fullscreen is ruled out: the
+          // spotlight moves the tile, the second click would land on another one.
+          if (
+            event.detail > 1 ||
+            focused === s.twitch ||
+            expanded ||
+            tiles.size < 2 ||
+            document.fullscreenElement
+          )
+            return;
+          spotlightClick = setTimeout(() => {
+            // an expand or a fullscreen asked meanwhile wins
+            if (
+              tiles.get(s.twitch) === t &&
+              focused !== s.twitch &&
+              !expanded &&
+              !document.fullscreenElement
+            )
+              focus(s.twitch);
+          }, 250);
         }}
         onRemove={() => {
+          // the spotlight's cross only sends it back to the grid; a lone tile has no grid to go back to
+          if (focused === s.twitch && tiles.size > 1) return focus(s.twitch);
           if (isLiveGrid()) return;
           remove(s.twitch);
           renderList();
@@ -1277,9 +1319,11 @@ export function startWorkspace(
           syncChat();
           save();
         }}
-        onChatMenu={(menu) => {
+        onTileMenu={(menu) => {
           if (menu.open) closeTileMenus(false, menu);
         }}
+        onTilesPosition={(position) => actions.setSpotlightTiles?.(position)}
+        onTilesSizeReset={resetTilesSize}
         onVolumeEnter={() => {
           bar.draggable = false;
         }}
@@ -1334,7 +1378,7 @@ export function startWorkspace(
     vol.value = String(volume);
     // one button, two states: a sound turned on here stays on until turned off here
     const bar = el.querySelector<HTMLDivElement>(".bar")!;
-    // A click on a paused still resumes it. The spotlight belongs to its header button alone.
+    // A click on a paused still resumes it.
     // The bar drags to reorder; a press on the volume slider must move the thumb, not the tile: the bar stops being
     // draggable while the pointer is on the slider, whatever the browser makes of a drag started inside an input.
     // Capture the pointer before it crosses an iframe. Native cross-document drops
@@ -1667,9 +1711,6 @@ export function startWorkspace(
       },
       onPlayerChange: (mode) => {
         if (t.player === player) setPlayerMode(t, mode);
-      },
-      onSpotlight: () => {
-        if (t.player === player) focus(t.el.dataset.login!);
       },
     });
     t.player = player;
@@ -2039,8 +2080,13 @@ export function startWorkspace(
     spot.title = `${tr(front ? "Revenir à la grille" : "Spotlight")} (SHIFT+CLICK)`;
     spot.setAttribute("aria-label", spot.title);
     spot.setAttribute("aria-pressed", String(front));
-    t.player?.setSpotlight?.(front, true);
     paintSound(t);
+  }
+  function paintUptime(t: Tile) {
+    const uptime = t.bar.querySelector<HTMLElement>(".uptime")!,
+      started = t.channel.online === false ? 0 : t.channel.startedAt; // the player reports the end before the next status clears startedAt
+    uptime.hidden = !started;
+    if (started) uptime.textContent = formatUptime(Date.now() - started);
   }
   // Saved intent survives reloads; the icon reports whether the current player is actually unmuted.
   function playerMuted(t: Tile) {
@@ -2155,9 +2201,42 @@ export function startWorkspace(
   const PLAYER_WIDTH = { enter: 640, keep: 560 },
     CHAT_WIDTH = { enter: 640, keep: 560 },
     CHAT_HEIGHT = { enter: 420, keep: 380 };
+  // An element over a video makes Twitch's embed count it as obscured, so the divider only lies where no iframe is: a
+  // strip's divider on the gap and the bars under it, a column's in a gutter it adds beside the spotlight.
+  const STRIP_HANDLE = 8,
+    COLUMN_GUTTER = 4,
+    TILES_SNAP = 14;
+  const tilesHandle = $<HTMLElement>(".spotlight-resize");
   let mountTimer: number | undefined,
     resizing = false,
-    batching = false;
+    batching = false,
+    resizingTiles = false,
+    tilesDivider = {
+      band: 0,
+      axis: 1,
+      min: 0,
+      max: 1,
+      snaps: [] as number[],
+    };
+  function resetTilesSize() {
+    setSpotlightTiles(preferences.spotlightTiles, null); // the size goes back to Auto's, the side stays
+    layout();
+  }
+  // the highlighted choice in the spotlight's menu follows the preference, also when a drag has just pinned a side
+  function paintTilesPosition(sized: boolean) {
+    $<HTMLSelectElement>("#spotlight-tiles-setting").value =
+      preferences.spotlightTiles;
+    const bar = focused && tiles.get(focused)?.bar;
+    if (!bar) return;
+    for (const button of bar.querySelectorAll<HTMLElement>(
+      "[data-tiles-position]",
+    ))
+      button.setAttribute(
+        "aria-pressed",
+        String(button.dataset.tilesPosition === preferences.spotlightTiles),
+      );
+    bar.querySelector<HTMLElement>(".tiles-size-reset")!.hidden = !sized;
+  }
   function layout() {
     if (batching) return; // a restore adds every tile first and lays them out once
     renderLanding();
@@ -2175,7 +2254,11 @@ export function startWorkspace(
         front(login) ? frontOrder.indexOf(login) : order.indexOf(login),
       );
       t.ppIcon();
-      t.bar.querySelector<HTMLButtonElement>(".close")!.disabled = isLiveGrid();
+      const close = t.bar.querySelector<HTMLButtonElement>(".close")!;
+      close.disabled = isLiveGrid() && !(split && front(login));
+      close.dataset.i18nTitle =
+        split && front(login) ? "Revenir à la grille" : "Retirer";
+      close.title = tr(close.dataset.i18nTitle);
       sync(t);
       t.bar.draggable = canDrag(login);
     }
@@ -2194,13 +2277,22 @@ export function startWorkspace(
       const tall = (width: number) => (width * 9) / 16 + bar; // a tile hugging a 16:9 video under its bar
       // The spotlight keeps the whole width, the small tiles in a strip under it, or the whole height, the small tiles
       // in a column beside it. They take the room it cannot use, less what an open chat asks for. Every column count
-      // is scored in both orientations, in the order the rules come: the widest spotlight first, then the most tiles
-      // on screen, then the fewest holes, then the least room left unused.
+      // is scored in both orientations, in the order the rules come: every tile on screen with a spotlight at least
+      // three quarters as wide as it can get, then the widest spotlight, then the most tiles on screen, then the fewest
+      // holes, then the least room left unused.
       const room = {
         below: box.height - tall(box.width) - (chat ? CHAT_BELOW : 0),
         beside:
-          box.width - ((box.height - bar) * 16) / 9 - (chat ? CHAT_BESIDE : 0),
+          box.width -
+          COLUMN_GUTTER -
+          ((box.height - bar) * 16) / 9 -
+          (chat ? CHAT_BESIDE : 0),
       };
+      // the widest tile when that many columns share a width, and the widest 16:9 video when that many rows share a height
+      const widthPerColumn = (width: number, cols: number) =>
+          (width - GAP * (cols - 1)) / cols,
+        videoPerRow = (height: number, rows: number) =>
+          ((height + GAP) / rows - GAP - bar) * (16 / 9);
       // what the spotlight renders in a box, the chat served first where it costs the video the least
       const spot = (w: number, h: number) =>
         chat
@@ -2209,19 +2301,61 @@ export function startWorkspace(
               Math.min(w - CHAT_BESIDE, ((h - bar) * 16) / 9),
             )
           : Math.min(w, ((h - bar) * 16) / 9);
+      // How far the divider may travel: one tile at least, and the spotlight keeps the width that grants the full player.
+      const columnRoom = grid.clientWidth - COLUMN_GUTTER;
+      const bandLimits = (below: boolean) => {
+        let min = (below ? tall(MIN_SMALL) : MIN_SMALL) + GAP,
+          max = below ? box.height : columnRoom;
+        // with no chat to spend it, room past the spotlight's full 16:9 would only turn into black bars
+        if (!chat)
+          min = Math.max(
+            min,
+            below
+              ? box.height - tall(box.width)
+              : columnRoom - ((box.height - bar) * 16) / 9,
+          );
+        while (
+          max > 0 &&
+          (below
+            ? spot(box.width, box.height - max)
+            : spot(columnRoom - max, box.height)) < PLAYER_WIDTH.enter
+        )
+          max -= 4;
+        return { min, max };
+      };
+      // A side the user pinned holds while the box has room for it; otherwise Auto decides, and the choice comes back
+      // with the room.
+      const wanted = preferences.spotlightTiles,
+        wantedBelow = wanted === "top" || wanted === "bottom",
+        wantedLimits =
+          wanted === "auto" ? { min: 1, max: 0 } : bandLimits(wantedBelow),
+        pinned = wantedLimits.min <= wantedLimits.max,
+        wantedSize = pinned
+          ? preferences.spotlightTilesSize[
+              wantedBelow ? "vertical" : "horizontal"
+            ]
+          : undefined;
       type Plan = {
         below: boolean;
         cols: number;
         tile: number;
         band: number;
+        video: number;
         rank: number[];
       };
       const plan = (below: boolean, cols: number): Plan | null => {
         const free = below ? room.below : room.beside;
-        // the strip spreads over the whole width; the column takes the room left, never narrower than a player's bar
+        // the strip spreads over the whole width; the column takes the room left, but no wider than lets every row
+        // fit in the height, and never narrower than a player's bar
         const tile = below
-          ? (box.width - GAP * (cols - 1)) / cols
-          : Math.max(MIN_SMALL, free / cols);
+          ? widthPerColumn(box.width, cols)
+          : Math.max(
+              MIN_SMALL,
+              Math.min(
+                free / cols,
+                Math.floor(videoPerRow(box.height, Math.ceil(small / cols))),
+              ),
+            );
         if (tile < MIN_SMALL && cols > 1) return null;
         const step = tall(tile) + GAP,
           fits = below
@@ -2235,7 +2369,7 @@ export function startWorkspace(
           1,
           below
             ? spot(box.width, box.height - band)
-            : spot(box.width - band, box.height),
+            : spot(box.width - COLUMN_GUTTER - band, box.height),
         );
         const seen = Math.min(small, rows * cols);
         return {
@@ -2243,6 +2377,7 @@ export function startWorkspace(
           cols,
           tile,
           band,
+          video,
           rank: [
             Math.round(video),
             seen,
@@ -2251,45 +2386,93 @@ export function startWorkspace(
           ],
         };
       };
-      let best = plan(false, 1)!; // a single column always holds, however narrow the box
+      // A band the user sized: the column count with the largest tile that shows them all, or else the most columns
+      // and a scroll. The tiles stretch to the band, their videos letterboxed, so the divider stays under the pointer.
+      const sizedPlan = (below: boolean, band: number) => {
+        const width = below ? box.width : band - GAP,
+          height = below ? band - GAP : box.height,
+          most = Math.max(1, Math.floor(width / MIN_SMALL));
+        let cols = most,
+          tile = widthPerColumn(width, most),
+          largest = 0;
+        for (let c = 1; c <= most; c++) {
+          const candidate = Math.min(
+            widthPerColumn(width, c),
+            videoPerRow(height, Math.ceil(small / c)),
+          );
+          if (candidate >= MIN_SMALL && candidate > largest) {
+            largest = tile = candidate;
+            cols = c;
+          }
+        }
+        return { below, cols, tile, band };
+      };
+      const plans: Plan[] = [];
       for (const below of [true, false])
         for (
           let cols = 1;
-          cols <=
-          Math.max(
-            1,
-            Math.floor((below ? box.width : room.beside) / MIN_SMALL),
-          );
+          cols <= Math.max(1, Math.floor(box.width / MIN_SMALL));
           cols++
         ) {
           const p = plan(below, cols);
-          if (p && outranks(p.rank, best.rank)) best = p;
-        }
+          if (p) plans.push(p);
+        } // a single column beside always holds, however narrow the box
+      const candidates = pinned
+        ? plans.filter((p) => p.below === wantedBelow)
+        : plans;
+      // ponytail: a fixed quarter of the spotlight is what the small tiles may take to all show
+      const widest = Math.max(...candidates.map((p) => p.video)),
+        score = (p: Plan) => [
+          +(p.rank[1] === small && p.video >= widest * 0.75),
+          ...p.rank,
+        ];
+      const best = wantedSize
+        ? sizedPlan(
+            wantedBelow,
+            Math.min(
+              wantedLimits.max,
+              Math.max(
+                wantedLimits.min,
+                wantedSize * (wantedBelow ? box.height : box.width),
+              ),
+            ),
+          )
+        : candidates.reduce((a, b) => (outranks(score(b), score(a)) ? b : a));
+      const side = pinned ? wanted : best.below ? "bottom" : "right",
+        first = side === "top" || side === "left"; // the small tiles come before the spotlight in the grid
       grid.classList.toggle("below", best.below);
-      const bandRows = Math.max(Math.ceil(small / best.cols), 1);
+      grid.dataset.tilesSide = side;
+      const bandRows = Math.max(Math.ceil(small / best.cols), 1),
+        tileRows = `repeat(${bandRows}, var(--tile-h))`;
       grid.style.setProperty("--cols", String(best.cols));
+      grid.style.setProperty("--tile-h", tall(best.tile) + "px");
       let w = box.width,
         h = box.height;
       if (best.below) {
         // the spotlight row hugs its video unless a chat is there to spend the room, so the black gathers under the strip
         h = box.height - best.band;
         if (!chat) h = Math.min(h, tall(box.width));
-        grid.style.setProperty("--tile-h", tall(best.tile) + "px");
         grid.style.gridTemplateColumns = `repeat(${best.cols}, 1fr)`;
-        grid.style.gridTemplateRows = `${h}px repeat(${bandRows}, var(--tile-h))`;
+        grid.style.gridTemplateRows = first
+          ? `${tileRows} ${h}px`
+          : `${h}px ${tileRows}`;
       } else {
-        grid.style.setProperty("--side", best.cols * best.tile + "px");
-        grid.style.removeProperty("--tile-h"); // the stylesheet derives it from --side and --cols
-        grid.style.gridTemplateColumns = "";
-        grid.style.gridTemplateRows = `repeat(${bandRows}, var(--tile-h))`;
+        grid.style.setProperty("--side", best.band - best.cols * GAP + "px");
+        grid.style.gridTemplateColumns = first
+          ? `repeat(${best.cols}, calc(var(--side) / var(--cols))) 1fr`
+          : "";
+        grid.style.gridTemplateRows = tileRows;
       }
       // The grid's reserved front cell excludes the scrollbar. Using the outer grid width overlaps side players.
-      w = parseFloat(getComputedStyle(grid, "::before").width);
+      const cell = parseFloat(getComputedStyle(grid, "::before").width);
+      w = best.below ? cell : cell - COLUMN_GUTTER;
       const cols = columnsFor(count, w, h),
-        rows = Math.ceil(count / cols);
+        rows = Math.ceil(count / cols),
+        frontX = box.left + (side === "left" ? grid.clientWidth - w : 0),
+        frontY = box.top + (side === "top" ? box.height - h : 0);
       for (const [name, value] of [
-        ["--front-x", box.left],
-        ["--front-y", box.top],
+        ["--front-x", frontX],
+        ["--front-y", frontY],
         ["--front-w", w],
         ["--front-h", h],
       ] as const)
@@ -2304,17 +2487,63 @@ export function startWorkspace(
           th = chat ? ch : tall(tw);
         style.setProperty(
           "--x",
-          box.left + (i % cols) * (cw + GAP) + (cw - tw) / 2 + "px",
+          frontX + (i % cols) * (cw + GAP) + (cw - tw) / 2 + "px",
         );
         style.setProperty(
           "--y",
-          box.top + Math.floor(i / cols) * (ch + GAP) + (ch - th) / 2 + "px",
+          frontY + Math.floor(i / cols) * (ch + GAP) + (ch - th) / 2 + "px",
         );
         style.setProperty("--w", tw + "px");
         style.setProperty("--h", th + "px");
       });
+      const axis = best.below ? box.height : box.width,
+        limits = pinned ? wantedLimits : bandLimits(best.below),
+        snaps: number[] = [];
+      for (let c = 1; c <= Math.floor(box.width / MIN_SMALL); c++) {
+        const rowCount = Math.ceil(small / c),
+          tile = best.below
+            ? widthPerColumn(box.width, c)
+            : videoPerRow(box.height, rowCount);
+        if (tile >= MIN_SMALL)
+          snaps.push(
+            best.below ? rowCount * (tall(tile) + GAP) : c * (tile + GAP),
+          );
+      }
+      tilesDivider = {
+        band: best.below ? box.height - h : grid.clientWidth - cell,
+        axis,
+        snaps,
+        ...limits,
+      };
+      Object.assign(
+        tilesHandle.style,
+        best.below
+          ? {
+              left: box.left + "px",
+              top: (first ? frontY - GAP : frontY + h) + "px",
+              width: grid.clientWidth + "px",
+              height: STRIP_HANDLE + "px",
+            }
+          : {
+              left: (first ? frontX - COLUMN_GUTTER - GAP : frontX + w) + "px",
+              top: box.top + "px",
+              width: COLUMN_GUTTER + GAP + "px",
+              height: box.height + "px",
+            },
+      );
+      const percent = (value: number) =>
+        String(Math.round((value / axis) * 100));
+      tilesHandle.setAttribute(
+        "aria-orientation",
+        best.below ? "horizontal" : "vertical",
+      );
+      tilesHandle.setAttribute("aria-valuemin", percent(limits.min));
+      tilesHandle.setAttribute("aria-valuemax", percent(limits.max));
+      tilesHandle.setAttribute("aria-valuenow", percent(tilesDivider.band));
+      paintTilesPosition(!!wantedSize);
     } else {
       grid.classList.remove("below");
+      delete grid.dataset.tilesSide;
       grid.style.removeProperty("--tile-h");
       for (const t of tiles.values())
         for (const name of ["--x", "--y", "--w", "--h"])
@@ -2383,7 +2612,7 @@ export function startWorkspace(
       else applySizes();
     } // only a window resize waits to settle
     syncChat();
-    save();
+    if (!resizingTiles) save(); // the divider's handle saves once, when it lets go
     updateAudioOverlay();
     refreshCollaborations();
     renderSoundBoard();
@@ -2488,6 +2717,7 @@ export function startWorkspace(
     tiles.forEach((t) => {
       watchdog(t);
       paint(t);
+      paintUptime(t);
     });
     markPreview();
     updateAudioOverlay();
@@ -2579,7 +2809,7 @@ export function startWorkspace(
       for (const name of ["id", "title", "data-tip"]) el.removeAttribute(name);
     }
     for (const control of header.querySelectorAll<HTMLElement>(
-      "button, details, .snd-wrap, .stream-info, .viewers",
+      "button, details, .snd-wrap, .stream-info, .viewers, .uptime",
     ))
       control.remove();
     const tile = tiles.get(dragPointer.login)!,
@@ -2738,6 +2968,30 @@ export function startWorkspace(
     }
   }).observe(grid); // window resizes and sidebar toggles both change the grid box
   grid.addEventListener("scroll", () => closeTileMenus(), { passive: true });
+  setupResizeHandle(tilesHandle, {
+    position: () => grid.dataset.tilesSide,
+    measure: () => ({ size: tilesDivider.band, extent: tilesDivider.axis }),
+    resize: (side, fraction, pointer) => {
+      const { axis, min, max, snaps } = tilesDivider;
+      if (min > max) return; // this side has no room to give: it would pin a size the layout cannot show
+      const band = Math.min(max, Math.max(min, fraction * axis));
+      // only a pointer snaps: an arrow key's step is smaller than the snap radius and could never leave a snap point
+      const snap = pointer
+        ? snaps
+            .filter(
+              (s) => s >= min && s <= max && Math.abs(s - band) < TILES_SNAP,
+            )
+            .sort((a, b) => Math.abs(a - band) - Math.abs(b - band))[0]
+        : undefined;
+      setSpotlightTiles(side, (snap ?? band) / axis); // touching the divider pins the side it is on
+      resizing = resizingTiles = true;
+      layout();
+      resizing = resizingTiles = false;
+    },
+    dragging: (active) => $("#main").classList.toggle("resizing-chat", active), // shares the chat handle's look and its shield over the iframes
+    save,
+  });
+  tilesHandle.addEventListener("dblclick", resetTilesSize);
   listenDocument("fullscreenchange", () => {
     const fullscreenTile = [...tiles.values()].find(
       (t) =>
@@ -2823,11 +3077,13 @@ export function startWorkspace(
       dismissLiveNotification(login);
       return;
     }
-    // The stream joins the grid, nothing more: no spotlight, no sound, and the pauses stay as they are.
+    // The stream joins the grid, nothing more: no spotlight, no sound, and the pauses stay as they are. The Live follows
+    // grid took it already: there the toast brings it in front instead.
     if (!tiles.has(login)) add(s);
     const t = tiles.get(login)!;
     if (!t) return;
     if (expanded) setExpanded(null); // an expanded tile would hide the newcomer
+    if (isLiveGrid() && focused !== login && tiles.size > 1) focus(login);
     if (innerWidth <= 700) document.body.classList.add("collapsed");
     dismissLiveNotification(login);
     renderList();
@@ -2841,7 +3097,6 @@ export function startWorkspace(
     pruneLiveNotifications(channels);
     for (const s of channels) {
       if (
-        !isLiveGrid() &&
         s.online &&
         lastLiveStatus.get(s.twitch) === false &&
         !liveNotifications.has(s.twitch)
@@ -2853,6 +3108,7 @@ export function startWorkspace(
           toast,
           <LiveNotification
             channel={s}
+            added={isLiveGrid()}
             onWatch={() => openLiveNotification(s.twitch)}
             onDismiss={() => dismissLiveNotification(s.twitch)}
           />,
@@ -2997,6 +3253,11 @@ export function startWorkspace(
         }}
         onFavorite={toggleFavorite}
         onPreview={queuePreview}
+        onHover={(row, shift) => {
+          // the custom player previews on a plain hover too, quiet; the embed waits for Shift
+          if (shift) queuePreview(row);
+          else if (preferences.player === "custom") queuePreview(row, true);
+        }}
         onLeavePreview={leavePreview}
       />,
     );
@@ -3624,6 +3885,9 @@ export function startWorkspace(
   }
   function switchNamedGrid(id: string) {
     if (!gridStore || gridStore!.activeId === id || !restored) return;
+    // a toast speaks for the grid it was raised in: "join the grid" or "joined it"
+    for (const login of liveNotifications.keys())
+      dismissLiveNotification(login);
     saveCurrentLayout();
     restored = false;
     clearTiles();
@@ -3921,6 +4185,8 @@ export function startWorkspace(
       preferences.spotlightChat;
     $<HTMLSelectElement>("#spotlight-chat-position-setting").value =
       preferences.spotlightChatPosition;
+    $<HTMLSelectElement>("#spotlight-tiles-setting").value =
+      preferences.spotlightTiles;
     $<HTMLSelectElement>("#latency-setting").value = preferences.latency;
     $<HTMLSelectElement>("#spotlight-latency-setting").value =
       preferences.spotlightLatency;
@@ -4004,13 +4270,22 @@ export function startWorkspace(
       // a row already under the pointer gets its preview card as soon as Shift goes down
       const row = list.querySelector<HTMLLIElement>("li:hover");
       if (row) queuePreview(row);
+      syncPreviewSound();
     });
     const releaseShiftFollow = () => {
       document.body.classList.remove("shift-spotlight");
-      hidePreview(); // the sidebar card lives only while Shift is held
-      if (!shiftStartedFollow) return;
-      shiftStartedFollow = false;
-      if (soundFollow) actions.toggleSoundFollow?.();
+      if (shiftStartedFollow) {
+        shiftStartedFollow = false;
+        if (soundFollow) actions.toggleSoundFollow?.();
+      }
+      // the embed's card lives only while Shift is held; the custom player's stays under the pointer, quiet
+      if (
+        preferences.player === "custom" &&
+        (list.querySelector("li:hover") || preview.matches(":hover")) &&
+        !document.hidden
+      )
+        syncPreviewSound();
+      else hidePreview();
     };
     listenDocument("keyup", (e) => {
       if (e.key === "Shift" && !e.shiftKey) releaseShiftFollow();
@@ -4051,6 +4326,10 @@ export function startWorkspace(
       if (!["auto", "top", "bottom", "left", "right"].includes(value)) return;
       setPreference("spotlightChatPosition", value);
       resetSpotlightChat();
+    };
+    actions.setSpotlightTiles = (value) => {
+      setSpotlightTiles(value);
+      layout();
     };
     actions.setTheme = (value) => setPreference("theme", value);
     actions.copyGrid = () => openGridForm("copy");

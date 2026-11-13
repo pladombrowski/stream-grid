@@ -16,6 +16,7 @@ interface Props {
   onToggle: (channel: Channel, spotlight: boolean) => void;
   onFavorite: (channel: Channel) => void;
   onPreview: (row: HTMLLIElement) => void;
+  onHover: (row: HTMLLIElement, shift: boolean) => void;
   onLeavePreview: () => void;
 }
 function FavoriteIcon() {
@@ -66,6 +67,7 @@ export function ChannelList(props: Props) {
     onToggle,
     onFavorite,
     onPreview,
+    onHover,
     onLeavePreview,
   } = props;
   return (
@@ -100,9 +102,10 @@ export function ChannelList(props: Props) {
               (s.online == null && refreshing ? " pending" : "")
             }
             onPointerEnter={(e) => {
-              // the card only opens under a held Shift: a sweep down the list stays quiet
-              if (e.pointerType !== "touch" && e.shiftKey && !youtube)
-                onPreview(e.currentTarget);
+              // YouTube rows have no Twitch preview: the custom player previews on a plain hover,
+              // the embed waits for Shift (upstream behaviour).
+              if (e.pointerType !== "touch" && !youtube)
+                onHover(e.currentTarget, e.shiftKey);
             }}
             onPointerLeave={onLeavePreview}
           >

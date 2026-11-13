@@ -13,6 +13,8 @@ export interface Preferences {
   spotlightLatency: Latency;
   spotlightChat: "on" | "off";
   spotlightChatPosition: ChatPosition;
+  spotlightTiles: ChatPosition;
+  spotlightTilesSize: { horizontal?: number; vertical?: number };
   listOrder: ListOrder;
 }
 export interface Channel {

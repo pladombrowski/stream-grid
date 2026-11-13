@@ -204,9 +204,6 @@ export class YouTubePlayer implements TwitchPlayer {
   getQuality() {
     return "auto";
   }
-  setSpotlight(_front: boolean, _available: boolean) {
-    /* the tile header owns the spotlight button */
-  }
   setMuted(value: boolean) {
     this.muted = value;
     if (!this.player) return;

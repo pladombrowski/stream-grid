@@ -598,12 +598,16 @@ dialog input:focus-visible {
 }
 [data-theme="light"] .chat-options summary:hover,
 [data-theme="light"] .chat-options[open] summary,
+[data-theme="light"] .tiles-options summary:hover,
+[data-theme="light"] .tiles-options[open] summary,
 [data-theme="light"] .collaboration summary,
 [data-theme="light"] .extensions summary {
   background: #7734d81a;
 }
 [data-theme="light"] .chat-options summary:hover,
 [data-theme="light"] .chat-options[open] summary,
+[data-theme="light"] .tiles-options summary:hover,
+[data-theme="light"] .tiles-options[open] summary,
 [data-theme="light"] .collaboration summary:hover,
 [data-theme="light"] .collaboration[open] summary,
 [data-theme="light"] .extensions summary:hover,
