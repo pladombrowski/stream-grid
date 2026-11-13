@@ -108,6 +108,7 @@ export function layoutChat(t: Tile) {
 }
 
 export function previewImageURL(s: Channel) {
+  if (s.platform === "youtube") return s.previewUrl || s.offlineUrl || "";
   if (s.online === false) return s.offlineUrl || ""; // the banner the channel set for its offline screen, when it has one
   const url =
     s.previewUrl ||

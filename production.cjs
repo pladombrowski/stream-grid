@@ -3,6 +3,7 @@ const { createServer } = require('node:http');
 const search = require('./api/search.js');
 const stream = require('./api/stream.js');
 const extensions = require('./api/extensions.js');
+const youtube = require('./api/youtube.js');
 
 function createApiServer() {
   return createServer(async (req, res) => {
@@ -19,6 +20,7 @@ function createApiServer() {
       const handler = path === '/api/search' ? search
         : path === '/api/stream' ? stream
         : path === '/api/extensions' ? extensions
+        : path === '/api/youtube' ? youtube
         : null;
       if (!handler) return res.status(404).json({ error: 'NOT_FOUND' });
       await handler(req, res);

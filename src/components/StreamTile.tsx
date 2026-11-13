@@ -1,9 +1,10 @@
 import { CollaborationMenu } from "./CollaborationMenu";
 import { StreamPoster } from "./StreamPoster";
 import type { PointerEventHandler } from "react";
-import type { ChatPosition } from "../types/domain";
+import type { ChatPosition, Platform } from "../types/domain";
 interface Props {
   display: string;
+  platform?: Platform;
   onSpotlight: () => void;
   onExpand: () => void;
   onPause: () => void;
@@ -24,6 +25,7 @@ interface Props {
 
 export function StreamTile({
   display,
+  platform,
   onSpotlight,
   onExpand,
   onPause,
@@ -51,6 +53,16 @@ export function StreamTile({
       >
         <img className="stream-avatar" alt="" draggable={false} />
         <b>{display}</b>
+        {platform === "youtube" && (
+          <span
+            className="platform-badge"
+            title="YouTube"
+            aria-label="YouTube"
+            role="img"
+          >
+            YouTube
+          </span>
+        )}
         <span className="playback-status" role="status" />
         <div className="stream-info" hidden>
           <span className="stream-category"></span>
@@ -106,6 +118,7 @@ export function StreamTile({
             data-i18n-aria-label="Utiliser le lecteur Twitch"
             aria-pressed="false"
             className="player-toggle"
+            hidden={platform === "youtube"}
             onClick={(e) => {
               e.stopPropagation();
               onPlayerToggle();
@@ -206,8 +219,18 @@ export function StreamTile({
                   </option>
                 </select>
               </label>
-              <a target="_blank" rel="noopener" data-i18n="Ouvrir sur Twitch ↗">
-                Ouvrir sur Twitch ↗
+              <a
+                target="_blank"
+                rel="noopener"
+                data-i18n={
+                  platform === "youtube"
+                    ? "Ouvrir sur YouTube ↗"
+                    : "Ouvrir sur Twitch ↗"
+                }
+              >
+                {platform === "youtube"
+                  ? "Ouvrir sur YouTube ↗"
+                  : "Ouvrir sur Twitch ↗"}
               </a>
             </div>
           </details>

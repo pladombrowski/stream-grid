@@ -1,6 +1,6 @@
 # Twitch grid
 
-Watch several Twitch streams on one screen, arrange their tiles, put one in spotlight, and choose the sound for each stream.
+Watch several Twitch and YouTube live streams on one screen, arrange their tiles, put one in spotlight, and choose the sound for each stream.
 
 Site: https://twitch.moinax.com
 
@@ -39,8 +39,8 @@ The frontend uses React, strict TypeScript, and Tailwind CSS, built with Vite.
 - `src/types` defines channels, saved layouts, commands, and the Twitch player interface.
 - `src/styles` groups Tailwind styles by application area. The original reset, colors, dimensions, animations, and responsive rules are retained. Tailwind Preflight is intentionally omitted because it changes native buttons, dialogs, and typography.
 - `public` contains the public Twitch client configuration, favicon, and share image.
-- `api/search.js`, `api/stream.js` and `api/extensions.js` are shared by local development and the production Node server.
-- `production.cjs` serves the three API routes and `/healthz` using Node's built-in HTTP server; it needs no installed runtime dependencies.
+- `api/search.js`, `api/stream.js`, `api/extensions.js` and `api/youtube.js` are shared by local development and the production Node server.
+- `production.cjs` serves the four API routes and `/healthz` using Node's built-in HTTP server; it needs no installed runtime dependencies.
 
 One React root owns the interface. A small external view store uses React portals to render into stable tile and list containers. Twitch owns its iframe mount nodes. Reordering changes CSS order without moving those nodes, and expanding a tile leaves its player in place. The workspace disposes timers, observers, subscriptions, and players when its mount is released.
 
@@ -111,6 +111,16 @@ Chat is available on a single tile, spotlight, and tiles wide enough to fit it. 
 Choose Auto, Top, Bottom, Left, or Right. Selecting a position opens chat immediately. Auto uses space below the video when at least 420 pixels remain; otherwise it chooses the placement with the larger video. Side chat can expand from 320 to 480 pixels into unused vertical letterboxing.
 
 Chat settings persist per tile and account mode. Repositioning an open chat keeps its iframe and video player mounted. The menu can also open chat on Twitch, which handles authorization to write messages.
+
+## YouTube lives
+
+Paste a YouTube live URL, a `youtu.be` link, a channel `/live` URL, an `@handle`, a channel ID, or an unambiguous 11-character video ID into the search field. The result row carries a YouTube badge; clicking it adds the tile to the grid beside Twitch channels. The tile keeps the usual pause, sound, volume, spotlight, fullscreen, chat, drag and saved-grid behaviour.
+
+YouTube tiles use YouTube's official iframe player and its native controls. The custom HLS player, the Twitch embed switch, the resolution menu and the latency settings remain Twitch-only. YouTube lives are not part of Twitch follows or favorites and have no Twitch collaborations or extensions. A live added by a video URL stays tied to that video; a channel `/live` URL resolves to the video that is live at that moment.
+
+Chat uses YouTube's official `youtube.com/live_chat` embed with `embed_domain` set to the page hostname. The page's `strict-origin-when-cross-origin` referrer policy supplies the matching origin. YouTube may disable embedding or chat for a particular broadcast; the tile then shows YouTube's own message or the app's unavailable state.
+
+`GET /api/youtube?q=…` reads the public watch page, or the channel's `/live` page, and extracts the live metadata from the embedded player response. It returns only public data (video ID, title, author, channel ID, thumbnail, watching count and start time), caches results for 30 seconds, and shares concurrent lookups. Each client (IPv6 clients grouped by /48) may make up to 60 cache-missing upstream lookups per minute, with at most 16 lookups in flight per client and 500 across the server; cached answers do not count. Page bodies over 4 MiB are rejected, and after YouTube throttles the server, cache misses observe a short cooldown while cached answers stay available. No API key or credentials are required. YouTube's page shape is undocumented: if a watch page can no longer be read, the endpoint answers `YOUTUBE_UNAVAILABLE`; a channel `/live` page that cannot be read is reported as not live.
 
 ## Twitch extensions
 

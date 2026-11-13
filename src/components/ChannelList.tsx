@@ -74,6 +74,7 @@ export function ChannelList(props: Props) {
         const present = selected.has(s.twitch),
           saved = favorites.has(s.twitch),
           blocked = locked && !present;
+        const youtube = s.platform === "youtube";
         const participants =
           s.online === false
             ? []
@@ -91,6 +92,7 @@ export function ChannelList(props: Props) {
           <li
             key={s.twitch}
             data-login={s.twitch}
+            data-platform={s.platform || "twitch"}
             className={
               (s.online === true ? "live" : s.online === false ? "off" : "") +
               (present ? " on" : "") +
@@ -99,7 +101,7 @@ export function ChannelList(props: Props) {
             }
             onPointerEnter={(e) => {
               // the card only opens under a held Shift: a sweep down the list stays quiet
-              if (e.pointerType !== "touch" && e.shiftKey)
+              if (e.pointerType !== "touch" && e.shiftKey && !youtube)
                 onPreview(e.currentTarget);
             }}
             onPointerLeave={onLeavePreview}
@@ -110,13 +112,16 @@ export function ChannelList(props: Props) {
               title={tr(
                 blocked ? "Grille verrouillée" : "Spotlight (SHIFT+CLICK)",
               )}
-              aria-label={tr(
-                present ? "Afficher ou retirer {name}" : "Regarder {name}",
-                { name: s.display },
-              )}
+              aria-label={
+                tr(present ? "Afficher ou retirer {name}" : "Regarder {name}", {
+                  name: s.display,
+                }) + (youtube ? " — YouTube" : "")
+              }
               aria-pressed={present}
               onClick={(e) => onToggle(s, e.shiftKey)}
-              onFocus={(e) => onPreview(e.currentTarget.closest("li")!)}
+              onFocus={(e) => {
+                if (!youtube) onPreview(e.currentTarget.closest("li")!);
+              }}
               onBlur={onLeavePreview}
             >
               <span className="avatar">
@@ -129,6 +134,15 @@ export function ChannelList(props: Props) {
               </span>
               <span className="n">
                 <span className="name">{s.display}</span>
+                {youtube && (
+                  <span
+                    className="platform"
+                    title="YouTube"
+                    aria-label="YouTube"
+                  >
+                    YouTube
+                  </span>
+                )}
                 {participants.some((p) => p.twitch !== s.twitch) && (
                   <span
                     className="collaboration-indicator"
@@ -142,7 +156,8 @@ export function ChannelList(props: Props) {
                 <div className="g">
                   {[s.online === false ? tr("Hors ligne") : "", s.game]
                     .filter(Boolean)
-                    .join(" · ") || tr("Chaîne Twitch")}
+                    .join(" · ") ||
+                    tr(youtube ? "Chaîne YouTube" : "Chaîne Twitch")}
                 </div>
               </span>
               <span className="v">
@@ -151,7 +166,7 @@ export function ChannelList(props: Props) {
             </button>
             <button
               className="favorite"
-              hidden={connected}
+              hidden={connected || youtube}
               title={favoriteLabel}
               aria-label={favoriteLabel}
               aria-pressed={saved}

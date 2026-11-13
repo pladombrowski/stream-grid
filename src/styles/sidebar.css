@@ -338,12 +338,30 @@ body.collapsed #list li.skeleton .n {
   @apply overflow-hidden text-ellipsis;
   vertical-align: middle;
 }
+#list .n:has(.platform) .name {
+  @apply inline-block;
+  max-width: calc(100% - 60px);
+  @apply overflow-hidden text-ellipsis;
+  vertical-align: middle;
+}
 #list .g {
   color: var(--dim);
   font-size: 12px;
   line-height: 16px;
   @apply overflow-hidden text-ellipsis;
   @apply whitespace-nowrap;
+}
+#list .platform {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 0 4px;
+  border-radius: 3px;
+  background: #f00;
+  color: #fff;
+  font-size: 10px;
+  line-height: 15px;
+  font-weight: 700;
+  vertical-align: middle;
 }
 #list .v {
   color: var(--dim);

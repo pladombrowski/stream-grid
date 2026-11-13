@@ -23,6 +23,7 @@ export interface PlayerConstructor {
     element: HTMLElement,
     options: {
       channel: string;
+      videoId?: string;
       parent: string[];
       width: number | string;
       height: number | string;
@@ -38,12 +39,48 @@ export interface PlayerConstructor {
   READY: string;
   PLAYING: string;
 }
+export interface YouTubePlayerInstance {
+  playVideo(): void;
+  pauseVideo(): void;
+  mute(): void;
+  unMute(): void;
+  isMuted(): boolean;
+  setVolume(value: number): void;
+  getVolume(): number;
+  getPlayerState(): number;
+  getIframe?(): HTMLIFrameElement;
+  destroy(): void;
+}
+export interface YouTubeNamespace {
+  Player: new (
+    element: HTMLElement | string,
+    options: {
+      videoId: string;
+      width?: string | number;
+      height?: string | number;
+      playerVars?: Record<string, string | number>;
+      events?: {
+        onReady?: (event: { target: YouTubePlayerInstance }) => void;
+        onStateChange?: (event: {
+          data: number;
+          target: YouTubePlayerInstance;
+        }) => void;
+        onError?: (event: {
+          data: number;
+          target: YouTubePlayerInstance;
+        }) => void;
+      };
+    },
+  ) => YouTubePlayerInstance;
+}
 declare global {
   interface WindowEventMap {
     preferenceschange: Event;
   }
   interface Window {
     Twitch?: { Player: PlayerConstructor };
+    YT?: YouTubeNamespace;
+    onYouTubeIframeAPIReady?: () => void;
   }
 }
 export interface Tile {

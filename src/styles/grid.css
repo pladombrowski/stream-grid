@@ -376,6 +376,18 @@ body.dragging .tile.dragged .bar {
   flex: none;
   margin-left: auto;
 } /* offline hides the stream info: without this the status and the actions clump against the name */
+/* A YouTube tile keeps YouTube's player and its own chat: the badge marks the source. */
+.tile .bar .platform-badge {
+  flex: none;
+  padding: 1px 4px;
+  border-radius: 3px;
+  background: #f00;
+  color: #fff;
+  font-size: 10px;
+  line-height: 14px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
 /* the stream info stays; the controls only take space when the tile is wide enough, otherwise they slide over it on hover */
 .tile {
   container-type: inline-size;

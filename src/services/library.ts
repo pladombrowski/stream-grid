@@ -11,6 +11,12 @@ let numberFormat = new Intl.NumberFormat(preferences.language, {
 });
 const validLogin = (value: unknown): value is string =>
   typeof value === "string" && /^[a-z0-9_]{1,25}$/.test(value);
+const youTubeKey = (value: unknown): value is string =>
+  typeof value === "string" && /^yt:[A-Za-z0-9_-]{11}$/.test(value);
+const validChannelKey = (value: unknown): value is string =>
+  validLogin(value) || youTubeKey(value);
+const isYouTubeChannel = (s: Channel) =>
+  s.platform === "youtube" || youTubeKey(s.twitch);
 function readStored<T>(key: string, fallback: T, storage = localStorage): T {
   try {
     return JSON.parse(storage.getItem(key) || "null") ?? fallback;
@@ -342,6 +348,9 @@ export {
   readStored,
   writeStored,
   validLogin,
+  validChannelKey,
+  youTubeKey as isYouTubeKey,
+  isYouTubeChannel,
   TwitchLibrary,
   numberFormat,
 };

@@ -30,3 +30,16 @@ test("extension type labels are translated", async () => {
   for (const key of ["Overlay", "Composant", "Panneau"])
     assert.equal(translations[key]?.length, 2);
 });
+
+test("YouTube copy is translated", async () => {
+  const { translations } = await import("../src/services/translations.ts");
+  for (const key of [
+    "Ouvrir sur YouTube ↗",
+    "Chaîne YouTube",
+    "Recherche sur YouTube…",
+    "Aucune live YouTube pour cette adresse.",
+    "La recherche YouTube est indisponible pour le moment.",
+    "Le lecteur YouTube est indisponible. Recharge la page pour réessayer.",
+  ])
+    assert.equal(translations[key]?.length, 2);
+});

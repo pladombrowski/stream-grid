@@ -1,4 +1,5 @@
 export type AccountMode = "guest" | "connected";
+export type Platform = "twitch" | "youtube";
 export type ChatPosition = "auto" | "top" | "bottom" | "left" | "right";
 export type Language = "fr" | "en" | "nl";
 export type Theme = "system" | "light" | "dark";
@@ -16,6 +17,8 @@ export interface Preferences {
 }
 export interface Channel {
   twitch: string;
+  platform?: Platform;
+  youtubeId?: string;
   display: string;
   profileUrl: string;
   previewUrl: string;

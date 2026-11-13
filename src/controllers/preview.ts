@@ -110,7 +110,13 @@ export function createPreviewController({
   }
   function showPreview(row: HTMLLIElement) {
     const s = getChannels().find((s) => s.twitch === row.dataset.login!);
-    if (!s || s.online === false || !row.isConnected || document.hidden) {
+    if (
+      !s ||
+      s.online === false ||
+      s.platform === "youtube" ||
+      !row.isConnected ||
+      document.hidden
+    ) {
       hidePreview();
       return;
     }

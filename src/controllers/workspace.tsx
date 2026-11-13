@@ -16,7 +16,7 @@ import type {
   LayoutSnapshot,
   SavedGrid,
 } from "../types/domain";
-import type { Tile, DragPointer } from "../types/player";
+import type { Tile, DragPointer, PlayerConstructor } from "../types/player";
 import { HttpError } from "../services/library";
 import { type WorkspaceViews } from "../components/render";
 import { StreamTile } from "../components/StreamTile";
@@ -38,10 +38,21 @@ import {
   readStored,
   writeStored,
   validLogin,
+  validChannelKey,
+  isYouTubeKey,
+  isYouTubeChannel,
   TwitchLibrary,
   numberFormat,
   refreshNumberFormat,
 } from "../services/library";
+import {
+  isYouTubeQuery,
+  restoreYouTubeChannel,
+  youtubeChatUrl,
+  youtubeLive,
+  youtubeWatchUrl,
+} from "../services/youtube";
+import { YouTubePlayer } from "../services/youtubePlayer";
 import { GridStore } from "../services/grids";
 import {
   channelExtensions,
@@ -106,9 +117,14 @@ export function startWorkspace(
   function tilePaused(t: Tile) {
     return t.paused ?? false;
   }
-  // the custom player draws its bar on every tile, so its pauses and volume count wherever the Twitch controls would
+  // the custom player draws its bar on every tile, so its pauses and volume count wherever the Twitch controls would;
+  // YouTube keeps its own controls, so its playback state is the viewer's too
   function ownsControls(t: Tile) {
-    return t.controls || (t.playerMode ?? preferences.player) === "custom";
+    return (
+      isYouTubeChannel(t.channel) ||
+      t.controls ||
+      (t.playerMode ?? preferences.player) === "custom"
+    );
   }
   function hoverPlayback(t: Tile) {
     if (
@@ -136,7 +152,7 @@ export function startWorkspace(
   let watched = loadWatched();
   const storedFollow = readStored<unknown>("tg.soundFollow", null);
   let soundFollow: string[] | null = Array.isArray(storedFollow)
-    ? storedFollow.filter(validLogin)
+    ? storedFollow.filter(validChannelKey)
     : null;
   let restoreMuteAfterFollow =
     !!soundFollow && readStored<boolean>("tg.restoreMuteAfterFollow", false);
@@ -179,8 +195,11 @@ export function startWorkspace(
     for (const s of live)
       if (!tiles.has(s.twitch)) add(s, true, 0.5, null, false, "auto", true);
     batching = false;
-    for (const login of [...tiles.keys()])
+    for (const login of [...tiles.keys()]) {
+      const t = tiles.get(login)!;
+      if (isYouTubeChannel(t.channel)) continue;
       if (!follows.some((s) => s.twitch === login)) remove(login, true, true);
+    }
     layout();
     renderList();
   }
@@ -203,9 +222,28 @@ export function startWorkspace(
       mutedAll,
       allPaused,
       channels: order.map((login) => {
-        const { twitch, display, profileUrl, previewUrl, offlineUrl } =
-          tiles.get(login)!.channel;
-        return { twitch, display, profileUrl, previewUrl, offlineUrl };
+        const {
+          twitch,
+          display,
+          profileUrl,
+          previewUrl,
+          offlineUrl,
+          platform,
+          youtubeId,
+          title,
+          game,
+        } = tiles.get(login)!.channel;
+        return {
+          twitch,
+          display,
+          profileUrl,
+          previewUrl,
+          offlineUrl,
+          platform,
+          youtubeId,
+          title,
+          game,
+        };
       }),
       collapsed: document.body.classList.contains("collapsed"),
       ...Object.fromEntries(
@@ -283,25 +321,32 @@ export function startWorkspace(
       tiles.get(login)!.spotlightMuted = before; // what the spotlight gives back on the way out
   }
   function restore() {
-    if (!layoutMode || restored || !playerConstructor()) return;
+    if (!layoutMode || restored) return;
     const st =
       gridStore?.active.layout ||
       readStored<LayoutSnapshot>("tg.layout." + layoutMode, {});
     const savedChannels = Array.isArray(st.channels) ? st.channels : [];
+    const orderKeys = Array.isArray(st.order) ? [...new Set(st.order)] : [];
+    // An empty or YouTube-only layout must restore even when the Twitch SDK is blocked.
+    const needsTwitch =
+      orderKeys.some((key) => !isYouTubeKey(key)) ||
+      savedChannels.some((s) => s && !isYouTubeKey(s.twitch));
+    if (needsTwitch && !playerConstructor()) return;
     allPaused = !!st.allPaused;
     mutedAll = Array.isArray(st.mutedAll)
-      ? st.mutedAll.filter(validLogin)
+      ? st.mutedAll.filter(validChannelKey)
       : null; // a global mute outranks whatever the tiles saved
     batching = true;
     liveLayoutToRestore = isLiveGrid() ? structuredClone(st) : null;
-    for (const login of !isLiveGrid() && Array.isArray(st.order)
-      ? [...new Set(st.order)].filter(validLogin)
+    for (const login of !isLiveGrid()
+      ? orderKeys.filter(validChannelKey)
       : []) {
+      const saved = savedChannels.find((x) => x?.twitch === login);
       const s =
         streamers.find((x) => x.twitch === login) ||
-        channel(
-          savedChannels.find((x) => x?.twitch === login) || { twitch: login },
-        );
+        (isYouTubeKey(login)
+          ? restoreYouTubeChannel(saved || { twitch: login })
+          : channel(saved || { twitch: login }));
       if (s) restoreChannel(s, st);
     }
     batching = false;
@@ -318,6 +363,7 @@ export function startWorkspace(
     restored = true;
     syncLiveGrid();
     syncChat();
+    void refreshYouTubeTiles();
     refreshCollaborations();
     save();
     // A late SDK load can restore channels after the initial status request has finished.
@@ -362,6 +408,8 @@ export function startWorkspace(
     script.onload = () => {
       restore();
       for (const t of tiles.values()) sync(t);
+      // A grid that restored empty waits for this: its follows arrive with the player.
+      syncLiveGrid();
     };
     script.onerror = () => {
       if (preferences.player === "embed" && !$("#notice").textContent)
@@ -394,7 +442,9 @@ export function startWorkspace(
 
   function syncChat() {
     for (const [login, t] of tiles) {
-      const allowed = t.controls && t.chatFits,
+      const youtube = isYouTubeChannel(t.channel);
+      const allowed =
+          t.controls && t.chatFits && (!youtube || !!t.channel.youtubeId),
         open =
           !t.chatOverride && focused === login
             ? preferences.spotlightChat === "on"
@@ -417,11 +467,11 @@ export function startWorkspace(
         delete t.body.dataset.chatPosition;
         continue;
       }
-      const chatSrc =
-        `https://www.twitch.tv/embed/${login}/chat?parent=${encodeURIComponent(location.hostname)}` +
-        (document.documentElement.dataset.theme === "dark"
-          ? "&darkpopout=1"
-          : "");
+      const dark = document.documentElement.dataset.theme === "dark";
+      const chatSrc = youtube
+        ? youtubeChatUrl(t.channel.youtubeId!, dark)
+        : `https://www.twitch.tv/embed/${login}/chat?parent=${encodeURIComponent(location.hostname)}` +
+          (dark ? "&darkpopout=1" : "");
       if (
         !t.chat.querySelector<HTMLIFrameElement | HTMLVideoElement>(
           "iframe, video",
@@ -589,7 +639,12 @@ export function startWorkspace(
 
   async function refreshExtensions(t: Tile) {
     const login = t.el.dataset.login!;
-    if (t.channel.online === false || t.extensionsLoading) return;
+    if (
+      isYouTubeChannel(t.channel) ||
+      t.channel.online === false ||
+      t.extensionsLoading
+    )
+      return;
     const age = Date.now() - (t.extensionsCheckedAt || 0);
     if (t.extensionsFailed ? age < 60000 : age < 300000) return;
     t.extensionsLoading = true;
@@ -723,6 +778,7 @@ export function startWorkspace(
     const queue = [...candidates.values()]
       .filter(
         (s) =>
+          validLogin(s.twitch) &&
           (s.online || (tiles.has(s.twitch) && s.online !== false)) &&
           (!collaborations.has(s.twitch) ||
             Date.now() - collaborations.get(s.twitch)!.checkedAt >= 60000),
@@ -1053,7 +1109,8 @@ export function startWorkspace(
   }
 
   // A stream that ends leaves its tile a minute to come back; then the tile goes, unless it is the spotlight or the grid is locked.
-  // Only a tile seen live can go: a channel added while offline waits for its stream.
+  // Only a tile seen live can go: a channel added while offline waits for its stream. A restored YouTube tile has no
+  // status of its own to lean on, so an ended one still gets its minute to come back.
   function trackOnline(t: Tile, online: boolean) {
     if (online) {
       t.wasOnline = true;
@@ -1061,7 +1118,8 @@ export function startWorkspace(
       t.offlineTimer = null;
       return;
     }
-    if (!t.wasOnline || t.offlineTimer) return;
+    if ((!t.wasOnline && !isYouTubeChannel(t.channel)) || t.offlineTimer)
+      return;
     t.offlineTimer = setTimeout(() => {
       t.offlineTimer = null;
       const login = t.el.dataset.login!;
@@ -1093,11 +1151,14 @@ export function startWorkspace(
     if (typeof s.online === "boolean") trackOnline(t, s.online);
     renderCollaboration(
       t,
-      s.online === false
+      isYouTubeChannel(s) || s.online === false
         ? []
         : collaborations.get(s.twitch)?.participants || [],
     );
-    if (s.online === false) {
+    if (isYouTubeChannel(s)) {
+      if (t.extensionsList.length || !t.extensions.hidden)
+        renderExtensions(t, []);
+    } else if (s.online === false) {
       closeExtensionWindows(s.twitch);
       if (t.extensionsList.length || !t.extensions.hidden)
         renderExtensions(t, []);
@@ -1146,7 +1207,7 @@ export function startWorkspace(
       );
       return false;
     }
-    if (!playerConstructor()) {
+    if (!isYouTubeChannel(s) && !playerConstructor()) {
       notice(
         tr(
           "Le lecteur Twitch est indisponible. Recharge la page pour réessayer.",
@@ -1157,6 +1218,8 @@ export function startWorkspace(
     const el = document.createElement("div");
     el.className = "tile loading";
     el.dataset.login = s.twitch;
+    el.dataset.platform = s.platform || "twitch";
+    el.dataset.playerMode = isYouTubeChannel(s) ? "embed" : preferences.player;
     const togglePause = () => {
       if (t.channel.online === false) return;
       t.nativeHold = false;
@@ -1177,6 +1240,7 @@ export function startWorkspace(
       el,
       <StreamTile
         display={s.display}
+        platform={s.platform}
         onSpotlight={() => focus(s.twitch)}
         onExpand={() => setExpanded(expanded === s.twitch ? null : s.twitch)}
         onPause={togglePause}
@@ -1302,8 +1366,13 @@ export function startWorkspace(
       body: el.querySelector<HTMLDivElement>(".tile-body")!,
       chat: el.querySelector<HTMLElement>(".chat")!,
       chatOptions: el.querySelector<HTMLDetailsElement>(".chat-options")!,
+      playerMode: isYouTubeChannel(s) ? "embed" : undefined,
     };
     setupChatResize(t, save);
+    if (isYouTubeChannel(s)) {
+      t.extensions.hidden = true;
+      t.collaboration.hidden = true;
+    }
     setupExtensions(t);
     void refreshExtensions(t);
     t.poster.onerror = () => {
@@ -1372,10 +1441,12 @@ export function startWorkspace(
     const chatButton = bar.querySelector<HTMLButtonElement>(".chat-toggle")!;
     chatButton.setAttribute("aria-controls", t.chat.id);
     t.chatOptions.querySelector<HTMLAnchorElement>("a")!.href =
-      `https://www.twitch.tv/popout/${s.twitch}/chat?popout=` +
-      (document.documentElement.dataset.theme === "dark"
-        ? "&darkpopout=1"
-        : "");
+      isYouTubeChannel(s) && s.youtubeId
+        ? youtubeWatchUrl(s.youtubeId)
+        : `https://www.twitch.tv/popout/${s.twitch}/chat?popout=` +
+          (document.documentElement.dataset.theme === "dark"
+            ? "&darkpopout=1"
+            : "");
     setupCollaboration(t);
     updateTileInfo(t, s);
     tiles.set(s.twitch, t);
@@ -1482,12 +1553,14 @@ export function startWorkspace(
   }
 
   function togglePlayer(t: Tile) {
+    if (isYouTubeChannel(t.channel)) return;
     setPlayerMode(
       t,
       (t.playerMode ?? preferences.player) === "custom" ? "embed" : "custom",
     );
   }
   function setPlayerMode(t: Tile, mode: "embed" | "custom") {
+    if (isYouTubeChannel(t.channel)) return;
     if (!playerConstructor(mode)) {
       notice(
         tr(
@@ -1515,16 +1588,19 @@ export function startWorkspace(
         : preferences.latency)
     );
   }
-  // Twitch only accepts the controls option when creating an embed. Recreate the changed
-  // tile, preserving its settings; all other iframes keep playing.
+  // Twitch only accepts the controls option when creating an embed; YouTube keeps its own controls and ignores it.
+  // Recreate the changed tile, preserving its settings; all other iframes keep playing.
   function mountPlayer(t: Tile, controls: boolean) {
     // Removing a fullscreen iframe also forces the browser to exit fullscreen.
     if (t.player && inFullscreen(t)) return;
-    const Constructor = playerConstructor(t.playerMode);
+    const youtube = isYouTubeChannel(t.channel);
+    const Constructor: PlayerConstructor | undefined = youtube
+      ? YouTubePlayer
+      : playerConstructor(t.playerMode);
     if (!Constructor) return;
     t.el.classList.toggle(
       "custom",
-      (t.playerMode ?? preferences.player) === "custom",
+      !youtube && (t.playerMode ?? preferences.player) === "custom",
     );
     if (!controls) t.nativeHold = false;
     t.el.classList.toggle("full-player", controls);
@@ -1576,6 +1652,7 @@ export function startWorkspace(
     t.commandedPlay = wantsPlayback(t);
     const player = new Constructor(embed, {
       channel: t.el.dataset.login!,
+      videoId: t.channel.youtubeId,
       parent: [location.hostname],
       width: "100%",
       height: "100%",
@@ -1596,19 +1673,29 @@ export function startWorkspace(
       },
     });
     t.player = player;
-    // The cover is outside Twitch's mount node, so iframe initialization cannot remove it.
-    nameFrame(
-      container.querySelector<HTMLIFrameElement | HTMLVideoElement>(
-        "iframe, video",
-      )!,
-      tr("Stream de {name}", { name: t.channel.display }),
-    );
+    // The cover is outside the player's mount node, so iframe initialization cannot remove it.
+    const initialFrame = container.querySelector<
+      HTMLIFrameElement | HTMLVideoElement
+    >("iframe, video");
+    if (initialFrame)
+      nameFrame(
+        initialFrame,
+        tr("Stream de {name}", { name: t.channel.display }),
+      );
     fit(container); // Size the iframe before READY so it fits the tile from the first frame.
     const current = () => t.player === player && t.el.isConnected;
     player.addEventListener(Constructor.READY, () => {
       if (!current()) return;
       t.ready = true;
       t.readyAt = Date.now();
+      const readyFrame = container.querySelector<
+        HTMLIFrameElement | HTMLVideoElement
+      >("iframe, video");
+      if (readyFrame)
+        nameFrame(
+          readyFrame,
+          tr("Stream de {name}", { name: t.channel.display }),
+        );
       mark(t);
       fit(container);
       player.setVolume(t.volume);
@@ -1666,7 +1753,18 @@ export function startWorkspace(
         if (event === "playbackBlocked") t.playbackBlocked = true;
         if (event === "playing" || event === "offline" || event === "error")
           t.playbackBlocked = false;
-        if (event === "error") t.playbackError = true;
+        if (event === "error") {
+          t.playbackError = true;
+          if (isYouTubeChannel(t.channel) && !t.ready) {
+            t.ready = true;
+            t.readyAt = 0;
+            notice(
+              tr(
+                "Le lecteur YouTube est indisponible. Recharge la page pour réessayer.",
+              ),
+            );
+          }
+        }
         if (event === "playing" || event === "online") t.playbackError = false;
         if (event === "playing") {
           t.hasPlayed = true;
@@ -1712,7 +1810,7 @@ export function startWorkspace(
           t.ppIcon();
           save();
         }
-        if (event === "play") t.commandedPlay = false;
+        if (event === "play" || event === "playing") t.commandedPlay = false;
         if (event === "pause") t.nativePaused = true;
         else if (event === "play" || event === "playing")
           t.nativePaused = false;
@@ -2693,6 +2791,7 @@ export function startWorkspace(
     searchVersion = 0,
     accountVersion = 0;
   let searching = false,
+    searchPlatform: "twitch" | "youtube" = "twitch",
     refreshInFlight = false,
     lastFollows = 0,
     searchTimer: number | undefined,
@@ -2816,7 +2915,8 @@ export function startWorkspace(
     refreshCollaborations();
     for (const s of streamers) {
       const t = tiles.get(s.twitch)!;
-      if (t) updateTileInfo(t, s);
+      // A YouTube search result is a stale snapshot: refreshYouTubeTiles owns its live status and metadata.
+      if (t && !isYouTubeChannel(t.channel)) updateTileInfo(t, s);
     }
   }
   function toggleFavorite(s: Channel) {
@@ -2937,14 +3037,19 @@ export function startWorkspace(
         : connected
           ? tr("Tu ne suis encore aucune chaîne.")
           : "";
-    $("#search-actions").hidden = !searchError || connected;
+    $("#search-actions").hidden =
+      !searchError || connected || searchPlatform === "youtube";
     $("#search-state").hidden = !q;
     $("#search-state").textContent = !q
       ? ""
       : q.length < 2
         ? tr("Saisis au moins 2 caractères.")
         : searching
-          ? tr("Recherche sur Twitch…")
+          ? tr(
+              searchPlatform === "youtube"
+                ? "Recherche sur YouTube…"
+                : "Recherche sur Twitch…",
+            )
           : searchError ||
             (rows.length
               ? tr(
@@ -2957,6 +3062,7 @@ export function startWorkspace(
     const login = loginFromQuery(q);
     $<HTMLButtonElement>("#add-login").hidden =
       connected ||
+      searchPlatform === "youtube" ||
       !searchError ||
       !login ||
       favorites.some((s) => s.twitch === login);
@@ -3040,11 +3146,19 @@ export function startWorkspace(
       query = $<HTMLInputElement>("#q").value.trim();
     results = [];
     searchError = "";
+    searchPlatform = isYouTubeQuery(query) ? "youtube" : "twitch";
     searching = query.length >= 2;
     rebuild();
     if (!searching) return;
     searchController = new AbortController();
     try {
+      if (searchPlatform === "youtube") {
+        const found = await youtubeLive(query, searchController.signal);
+        if (version !== searchVersion) return;
+        results = found ? [found] : [];
+        if (!found) searchError = tr("Aucune live YouTube pour cette adresse.");
+        return;
+      }
       const found = await (library || new TwitchLibrary("")).search(
         loginFromQuery(query) || query,
         searchController.signal,
@@ -3057,7 +3171,11 @@ export function startWorkspace(
           ? (cause as HttpError)
           : new HttpError(String(cause));
       if (version !== searchVersion || error.name === "AbortError") return;
-      if (error.status === 401) handleError(error);
+      if (searchPlatform === "youtube") {
+        searchError = error.status
+          ? error.message
+          : tr("La recherche YouTube est indisponible pour le moment.");
+      } else if (error.status === 401) handleError(error);
       else
         searchError = error.status
           ? error.message
@@ -3096,7 +3214,7 @@ export function startWorkspace(
           ),
         ),
       ];
-      const live = await library.live(logins);
+      const live = await library.live(logins.filter(validLogin));
       if (version !== accountVersion) return;
       const update = (s: Channel) =>
         channel({
@@ -3123,13 +3241,15 @@ export function startWorkspace(
         favorites = favorites.map((s) =>
           logins.includes(s.twitch) ? update(s) : s,
         );
-      results = results.map((s) => (logins.includes(s.twitch) ? update(s) : s));
+      results = results.map((s) =>
+        isYouTubeChannel(s) ? s : logins.includes(s.twitch) ? update(s) : s,
+      );
       if (reloadFollows) lastFollows = Date.now();
       rebuild();
       if (connected || $("#notice").textContent === tr(statusUnavailable))
         notice();
       for (const [login, t] of tiles)
-        if (logins.includes(login)) {
+        if (!isYouTubeChannel(t.channel) && logins.includes(login)) {
           updateTileInfo(t, update(t.channel));
           void refreshExtensions(t);
         }
@@ -3149,8 +3269,9 @@ export function startWorkspace(
       refreshInFlight = false;
       if (version === accountVersion)
         for (const t of tiles.values())
-          if (t.waitingForStatus) {
-            // A failed lookup leaves the status unknown; let Twitch try instead of waiting forever.
+          if (t.waitingForStatus && !isYouTubeChannel(t.channel)) {
+            // A failed Twitch lookup leaves the status unknown; let the player try instead of waiting forever.
+            // A YouTube status is refreshYouTubeTiles' to resolve.
             t.waitingForStatus = false;
             sync(t);
           }
@@ -3161,6 +3282,53 @@ export function startWorkspace(
         renderList(); // loading rows step aside
       if (version !== accountVersion && !lifecycle.disposed) refresh();
     }
+  }
+  let youTubeRefreshInFlight = false;
+  async function refreshYouTubeTiles() {
+    if (lifecycle.disposed || youTubeRefreshInFlight || document.hidden) return;
+    const youtubeTiles = [...tiles.values()].filter(
+      (t) => isYouTubeChannel(t.channel) && !!t.channel.youtubeId,
+    );
+    if (!youtubeTiles.length) return;
+    youTubeRefreshInFlight = true;
+    let changed = false;
+    try {
+      // The endpoint caps pending lookups per client: a large grid goes in chunks.
+      for (let i = 0; i < youtubeTiles.length; i += 8)
+        await Promise.all(
+          youtubeTiles.slice(i, i + 8).map(async (t) => {
+            const key = t.el.dataset.login!;
+            try {
+              const next = await youtubeLive(t.channel.youtubeId!);
+              if (tiles.get(key) !== t) return;
+              const updated: Channel = next
+                ? {
+                    ...t.channel,
+                    online: true,
+                    display: next.display || t.channel.display,
+                    profileUrl: next.profileUrl || t.channel.profileUrl,
+                    previewUrl: next.previewUrl || t.channel.previewUrl,
+                    title: next.title,
+                    viewersAmount: next.viewersAmount,
+                  }
+                : { ...t.channel, online: false };
+              updateTileInfo(t, updated);
+              const result = results.find((s) => s.twitch === key);
+              if (result) Object.assign(result, updated);
+              changed = true;
+            } catch {
+              /* a transient lookup leaves the tile as it is */
+              if (tiles.get(key) === t && t.waitingForStatus) {
+                t.waitingForStatus = false;
+                sync(t);
+              }
+            }
+          }),
+        );
+    } finally {
+      youTubeRefreshInFlight = false;
+    }
+    if (changed) renderList();
   }
   function disconnect(clearNotice = true) {
     lastLiveStatus.clear();
@@ -3197,7 +3365,9 @@ export function startWorkspace(
     searchVersion++;
     results = [];
     searchError = "";
-    searching = $<HTMLInputElement>("#q").value.trim().length >= 2;
+    const value = $<HTMLInputElement>("#q").value.trim();
+    searchPlatform = isYouTubeQuery(value) ? "youtube" : "twitch";
+    searching = value.length >= 2;
     rebuild();
     searchTimer = setTimeout(search, 300);
   };
@@ -3219,7 +3389,20 @@ export function startWorkspace(
     refresh();
   };
   actions.searchKey = (e) => {
-    if (e.key === "Enter" && !$<HTMLButtonElement>("#add-login").hidden)
+    if (e.key !== "Enter") return;
+    if (searchPlatform === "youtube") {
+      const found = results.find(
+        (s) => s.platform === "youtube" && s.online === true,
+      );
+      if (found) {
+        hidePreview();
+        if (!tiles.has(found.twitch)) toggle(found);
+        $<HTMLInputElement>("#q").value = "";
+        search();
+      }
+      return;
+    }
+    if (!$<HTMLButtonElement>("#add-login").hidden)
       $<HTMLButtonElement>("#add-login").click();
   };
   actions.connect = () => {
@@ -3329,11 +3512,15 @@ export function startWorkspace(
   setInterval(() => {
     if (!document.hidden) refresh();
   }, 30000);
+  setInterval(() => {
+    if (!document.hidden) void refreshYouTubeTiles();
+  }, 60000);
   listenDocument("visibilitychange", () => {
     if (!document.hidden) {
       tiles.forEach(sync);
       refreshPosters();
       refresh();
+      void refreshYouTubeTiles();
     }
   });
   lifecycle.addEventListener("pagehide", () => closeExtensionWindows());
@@ -3597,12 +3784,14 @@ export function startWorkspace(
     }
     if (currentPlayerMode !== preferences.player) {
       for (const t of tiles.values()) {
+        if (isYouTubeChannel(t.channel)) continue;
         delete t.playerMode;
         delete t.el.dataset.playerMode;
       }
       currentPlayerMode = preferences.player;
       hidePreview();
-      for (const t of tiles.values()) releasePlayer(t);
+      for (const t of tiles.values())
+        if (!isYouTubeChannel(t.channel)) releasePlayer(t);
       if (playerConstructor()) {
         restore();
         layout();
@@ -3631,7 +3820,12 @@ export function startWorkspace(
     for (const t of tiles.values()) {
       paint(t);
       updateTileInfo(t, t.channel);
-      if (t.channel.online !== false) renderExtensions(t, t.extensionsList);
+      if (isYouTubeChannel(t.channel)) {
+        if (t.extensionsList.length || !t.extensions.hidden)
+          renderExtensions(t, []);
+      } else if (t.channel.online !== false) {
+        renderExtensions(t, t.extensionsList);
+      }
       t.chat.setAttribute(
         "aria-label",
         tr("Chat de {name}", { name: t.channel.display }),
@@ -3654,11 +3848,14 @@ export function startWorkspace(
           : "Agrandir dans la fenêtre",
       );
       button.setAttribute("aria-label", button.title);
-      t.chatOptions.querySelector<HTMLAnchorElement>("a")!.href =
-        `https://www.twitch.tv/popout/${t.el.dataset.login!}/chat?popout=` +
-        (document.documentElement.dataset.theme === "dark"
-          ? "&darkpopout=1"
-          : "");
+      const chatLink = t.chatOptions.querySelector<HTMLAnchorElement>("a")!;
+      chatLink.href =
+        isYouTubeChannel(t.channel) && t.channel.youtubeId
+          ? youtubeWatchUrl(t.channel.youtubeId)
+          : `https://www.twitch.tv/popout/${t.el.dataset.login!}/chat?popout=` +
+            (document.documentElement.dataset.theme === "dark"
+              ? "&darkpopout=1"
+              : "");
     }
     for (const [login, toast] of liveNotifications) {
       const s = (library.user ? follows : favorites).find(
@@ -4037,6 +4234,10 @@ export function startWorkspace(
       rebuild: { configurable: true, get: () => rebuild },
       search: { configurable: true, get: () => search },
       refresh: { configurable: true, get: () => refresh },
+      refreshYouTubeTiles: {
+        configurable: true,
+        get: () => refreshYouTubeTiles,
+      },
       disconnect: { configurable: true, get: () => disconnect },
       channel: { configurable: true, get: () => channel },
       preferences: { configurable: true, get: () => preferences },

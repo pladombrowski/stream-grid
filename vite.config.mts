@@ -4,12 +4,14 @@ import tailwindcss from "@tailwindcss/vite";
 import search from "./api/search.js";
 import stream from "./api/stream.js";
 import extensions from "./api/extensions.js";
+import youtube from "./api/youtube.js";
 
 function installSearch(middlewares: Connect.Server) {
   for (const [path, handler] of [
     ["/api/search", search],
     ["/api/stream", stream],
     ["/api/extensions", extensions],
+    ["/api/youtube", youtube],
   ] as const)
     middlewares.use(path, (req, res) => {
       req.url = path + (req.url === "/" ? "" : req.url);

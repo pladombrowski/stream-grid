@@ -1,5 +1,17 @@
 const { test, expect } = require('@playwright/test');
-const { mockPlayer, choose } = require('./fixtures.cjs');
+const { mockPlayer, mockYouTube, choose } = require('./fixtures.cjs');
+function youtubeFixture(query) {
+  return {
+    live: !/offline/i.test(query),
+    videoId: 'ytlive00001',
+    title: 'YouTube live test',
+    author: 'YouTube test channel',
+    channelId: 'UCtesttesttesttesttesttest',
+    thumbnail: 'https://i.ytimg.com/vi/ytlive00001/hqdefault.jpg',
+    viewers: 1234,
+    startedAt: Date.now(),
+  };
+}
 async function setup(page, connected = false, landing = false, extensions = []) {
   const errors = []; page.on('pageerror', e => errors.push(e.message));
   if (!landing) await page.addInitScript(() => sessionStorage.setItem('tg.landing', 'true'));
@@ -18,6 +30,22 @@ async function setup(page, connected = false, landing = false, extensions = []) 
   await page.route('**/api/extensions?**', route => {
     const channel = new URL(route.request().url()).searchParams.get('channel') || '';
     return route.fulfill({ json: { channel, extensions } });
+  });
+  await page.route('https://www.youtube.com/iframe_api', r =>
+    r.fulfill({ contentType: 'text/javascript', body: mockYouTube }),
+  );
+  await page.route('https://www.youtube.com/live_chat**', r =>
+    r.fulfill({ contentType: 'text/html', body: '<!doctype html><title>chat</title>' }),
+  );
+  await page.route('https://i.ytimg.com/**', r =>
+    r.fulfill({
+      contentType: 'image/svg+xml',
+      body: '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="9"/>',
+    }),
+  );
+  await page.route('**/api/youtube?**', route => {
+    const query = new URL(route.request().url()).searchParams.get('q') || '';
+    return route.fulfill({ json: youtubeFixture(query) });
   });
   await page.route('**/config.json', r => r.fulfill({ json: { twitchClientId: connected ? 'test-client' : '' } }));
   await page.route('**/_vercel/**', r => r.fulfill({ body: '' }));
@@ -3246,5 +3274,320 @@ test('extensions: removing the tile closes its extension windows', async ({ page
   await page.locator('#grid [data-login="tiranumisu"] .close').click();
   await expect(page.locator('#grid [data-login="tiranumisu"]')).toHaveCount(0);
   expect(await page.evaluate(() => window.__closedExtensions)).toBe(1);
+  expect(errors).toEqual([]);
+});
+
+test('a YouTube live joins the grid with its chat and survives a reload', async ({ page }) => {
+  const errors = await setup(page, false, false, [extensionFixture]);
+  const youtubeExtensions = [], youtubeCollaborations = [];
+  page.on('request', request => {
+    const url = new URL(request.url());
+    const channel = url.searchParams.get('channel') || '';
+    const collaboration = url.searchParams.get('collaboration') || '';
+    if (url.pathname === '/api/extensions' && channel.startsWith('yt:')) youtubeExtensions.push(channel);
+    if (url.pathname === '/api/search' && collaboration.startsWith('yt:')) youtubeCollaborations.push(collaboration);
+  });
+  await page.goto('/');
+  await page.locator('#q').fill('https://www.youtube.com/watch?v=ytlive00001');
+  const row = page.locator('#list [data-login="yt:ytlive00001"]');
+  await expect(row).toBeVisible();
+  await expect(row.locator('.platform')).toHaveText('YouTube');
+  await row.locator('.channel').click();
+  const tile = page.locator('#grid [data-login="yt:ytlive00001"]');
+  await expect(tile).toHaveCount(1);
+  await expect(tile).toHaveAttribute('data-platform', 'youtube');
+  await readyPlayers(page);
+  expect(await page.evaluate(() => tiles.get('yt:ytlive00001')?.player?.getMuted() ?? null)).toBe(true);
+  await expect(tile.locator('.platform-badge')).toHaveText('YouTube');
+  await expect(tile.locator('.extensions')).toBeHidden();
+  await expect(tile.locator('.collaboration')).toBeHidden();
+  await expect(tile.locator('.player-toggle')).toBeHidden();
+  // The non-empty extension and collaboration fixtures make these hidden checks meaningful: nothing Twitch-only
+  // may be asked about a YouTube tile.
+  expect(youtubeExtensions).toEqual([]);
+  expect(youtubeCollaborations).toEqual([]);
+
+  await tile.locator('.chat-toggle').click();
+  const chat = tile.locator('.chat iframe');
+  await expect(chat).toHaveAttribute('src', /youtube\.com\/live_chat\?v=ytlive00001/);
+  await expect(chat).toHaveAttribute('src', /embed_domain=localhost/);
+  await tile.locator('.chat-options summary').click();
+  await expect(tile.locator('.chat-menu a')).toHaveAttribute(
+    'href',
+    'https://www.youtube.com/watch?v=ytlive00001',
+  );
+  await tile.locator('.chat-options summary').click();
+
+  // A pause the app did not command (the viewer's, through YouTube's own controls) is a native hold:
+  // the tile stays paused and keeps its player, so a stale status cannot take it for a stopped stream.
+  // The chat layout remounts the player, so wait for it to actually play again first.
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () => tiles.get('yt:ytlive00001')?.player?.getPlayerState().playback ?? null,
+      ),
+    )
+    .toBe('Playing');
+  await page.evaluate(() => tiles.get('yt:ytlive00001')?.player?.player?.pauseVideo());
+  await expect
+    .poll(() =>
+      page.evaluate(() => {
+        const t = tiles.get('yt:ytlive00001');
+        return { paused: t?.paused ?? null, playback: t?.player?.getPlayerState().playback ?? null };
+      }),
+    )
+    .toEqual({ paused: true, playback: 'Paused' });
+  await page.evaluate(() => tiles.get('yt:ytlive00001')?.player?.player?.playVideo());
+  await expect
+    .poll(() => page.evaluate(() => tiles.get('yt:ytlive00001')?.paused ?? null))
+    .toBe(false);
+
+  // The tile's own button pauses it: the paused tile gives its player back to the poster...
+  await tile.locator('.pp').click();
+  await expect
+    .poll(() =>
+      page.evaluate(() => {
+        const t = tiles.get('yt:ytlive00001');
+        return { paused: t?.paused ?? null, player: t?.player ?? null };
+      }),
+    )
+    .toEqual({ paused: true, player: null });
+  await expect(tile).toHaveClass(/poster-only/);
+  await expect(tile.locator('.stream-poster')).toBeVisible();
+  // ...and resuming remounts a fresh player that reaches playing.
+  await tile.locator('.pp').click();
+  await expect
+    .poll(() =>
+      page.evaluate(() => {
+        const t = tiles.get('yt:ytlive00001');
+        return {
+          paused: t?.paused ?? null,
+          ready: t?.ready ?? null,
+          playback: t?.player?.getPlayerState().playback ?? null,
+        };
+      }),
+    )
+    .toEqual({ paused: false, ready: true, playback: 'Playing' });
+  await expect(tile).not.toHaveClass(/poster-only/);
+  await expect(tile.locator('.player iframe')).toBeVisible();
+
+  expect(await page.evaluate(() => tiles.get('yt:ytlive00001')?.player?.getMuted() ?? null)).toBe(true);
+  await tile.locator('.snd').click();
+  await expect
+    .poll(() => page.evaluate(() => tiles.get('yt:ytlive00001')?.player?.getMuted() ?? null))
+    .toBe(false);
+
+  await favorite(page, 'mistermv');
+  await page.locator('#list [data-login="mistermv"] .channel').click();
+  await expect(page.locator('#grid .tile')).toHaveCount(2);
+
+  await page.reload();
+  await expect(page.locator('#grid .tile')).toHaveCount(2);
+  await readyPlayers(page);
+  await expect(page.locator('#grid [data-login="yt:ytlive00001"]')).toHaveAttribute(
+    'data-platform',
+    'youtube',
+  );
+  const layout = await page.evaluate(() => JSON.parse(localStorage.getItem('tg.layout.guest')));
+  expect(layout.order).toContain('yt:ytlive00001');
+  expect(layout.order).toContain('mistermv');
+  expect(layout.channels.find(c => c.twitch === 'yt:ytlive00001')).toMatchObject({
+    platform: 'youtube',
+    youtubeId: 'ytlive00001',
+  });
+  expect(youtubeExtensions).toEqual([]);
+  expect(youtubeCollaborations).toEqual([]);
+  expect(errors).toEqual([]);
+});
+
+test('a YouTube address without a live shows a message and no row', async ({ page }) => {
+  const errors = await setup(page);
+  await page.route('**/api/youtube?**', route =>
+    route.fulfill({ json: { live: false, videoId: 'ytlive00001' } }),
+  );
+  await page.goto('/');
+  await page.locator('#q').fill('https://www.youtube.com/watch?v=ytlive00001');
+  await expect(page.locator('#search-state')).toContainText(
+    'Aucune live YouTube pour cette adresse.',
+  );
+  await expect(page.locator('#list [data-login="yt:ytlive00001"]')).toHaveCount(0);
+  await expect(page.locator('#add-login')).toBeHidden();
+  expect(errors).toEqual([]);
+});
+
+test('an 11-character Twitch login is not treated as a YouTube ID', async ({ page }) => {
+  const errors = await setup(page);
+  const youtubeRequests = [];
+  page.on('request', request => {
+    const url = new URL(request.url());
+    if (url.pathname === '/api/youtube') youtubeRequests.push(url.search);
+  });
+  await page.goto('/');
+  await page.locator('#q').fill('abcdefghijk');
+  await expect(page.locator('#list [data-login="abcdefghijk"]')).toBeVisible();
+  await expect(page.locator('#list')).toHaveAttribute('aria-busy', 'false');
+  await expect(page.locator('#list [data-login^="yt:"]')).toHaveCount(0);
+  expect(youtubeRequests).toEqual([]);
+  expect(errors).toEqual([]);
+});
+
+test('a YouTube status refresh updates its tile and row, no stale refresh revives it, and it leaves after a minute', async ({ page }) => {
+  const errors = await setup(page);
+  let youtubeOnline = true;
+  await page.route('**/api/youtube?**', route => {
+    const query = new URL(route.request().url()).searchParams.get('q') || '';
+    return route.fulfill({
+      json: youtubeOnline ? youtubeFixture(query) : { live: false, videoId: 'ytlive00001' },
+    });
+  });
+  await page.clock.install();
+  await page.goto('/');
+  await page.locator('#q').fill('https://www.youtube.com/watch?v=ytlive00001');
+  await page.clock.runFor(1000);
+  const row = page.locator('#list [data-login="yt:ytlive00001"]');
+  await expect(row).toBeVisible();
+  await row.locator('.channel').click();
+  const tile = page.locator('#grid [data-login="yt:ytlive00001"]');
+  await expect(tile).toHaveCount(1);
+  await page.clock.runFor(1000);
+  await expect.poll(() => page.evaluate(() => tiles.get('yt:ytlive00001')?.ready)).toBe(true);
+
+  youtubeOnline = false;
+  await page.evaluate(() => refreshYouTubeTiles());
+  // A status-driven offline tile shows its offline cover (the tile's .offline class is reserved for the
+  // player reporting its own stream over), and its search row follows it.
+  await expect(tile.locator('.preview-cover')).toHaveClass(/offline/);
+  await expect(tile.locator('.preview-status span')).toHaveText('Hors ligne');
+  expect(await page.evaluate(() => tiles.get('yt:ytlive00001')?.channel.online ?? null)).toBe(false);
+  await expect(row).toHaveClass(/off/);
+  await expect(row.locator('.g')).toContainText('Hors ligne');
+  expect(await page.evaluate(() => tiles.get('yt:ytlive00001')?.player ?? null)).toBeNull();
+
+  // A Twitch status refresh owns only Twitch data: it must leave both the YouTube tile and its
+  // search-result metadata alone, and a rebuild must not take the stale result for the tile's status.
+  await expect.poll(() => page.evaluate(() => refreshInFlight)).toBe(false);
+  const seedStaleResult = () => page.evaluate(() => {
+    const r = results.find(s => s.twitch === 'yt:ytlive00001');
+    if (r) {
+      r.online = true;
+      r.title = 'stale title';
+      r.viewersAmount = { number: 999, formatted: '999' };
+    }
+  });
+  const tileState = () => page.evaluate(() => {
+    const t = tiles.get('yt:ytlive00001');
+    return { online: t?.channel.online ?? null, title: t?.channel.title ?? null };
+  });
+  const resultState = () => page.evaluate(() => {
+    const r = results.find(s => s.twitch === 'yt:ytlive00001');
+    return { online: r?.online ?? null, title: r?.title ?? null };
+  });
+  await seedStaleResult();
+  await page.evaluate(() => refresh());
+  await expect.poll(() => page.evaluate(() => refreshInFlight)).toBe(false);
+  expect(await tileState()).toEqual({ online: false, title: 'YouTube live test' });
+  await expect(tile.locator('.preview-cover')).toHaveClass(/offline/);
+  // The refresh leaves the seeded result untouched: only refreshYouTubeTiles may rewrite it.
+  expect(await resultState()).toEqual({ online: true, title: 'stale title' });
+  // The row follows the deliberately corrupt result here; only the tile's own status matters.
+  await seedStaleResult();
+  await page.evaluate(() => rebuild());
+  expect(await tileState()).toEqual({ online: false, title: 'YouTube live test' });
+  await expect(tile.locator('.preview-cover')).toHaveClass(/offline/);
+
+  await page.clock.runFor(61000);
+  await expect(page.locator('#grid [data-login="yt:ytlive00001"]')).toHaveCount(0);
+  expect(errors).toEqual([]);
+});
+
+test('a YouTube-only layout restores with the Twitch SDK blocked', async ({ page }) => {
+  const errors = await setup(page);
+  await page.addInitScript(() => {
+    localStorage.setItem('tg.layout.guest', JSON.stringify({
+      order: ['yt:ytlive00001'],
+      channels: [{
+        twitch: 'yt:ytlive00001',
+        platform: 'youtube',
+        youtubeId: 'ytlive00001',
+        display: 'YouTube test channel',
+        profileUrl: 'https://i.ytimg.com/vi/ytlive00001/hqdefault.jpg',
+        previewUrl: 'https://i.ytimg.com/vi/ytlive00001/hqdefault.jpg',
+      }],
+    }));
+    localStorage.setItem('tg.preferences', JSON.stringify({
+      ...JSON.parse(localStorage.getItem('tg.preferences') || '{}'),
+      player: 'embed',
+    }));
+  });
+  let blockedSdk = 0;
+  await page.route('https://player.twitch.tv/js/embed/v1.js', r => {
+    blockedSdk++;
+    return r.abort();
+  });
+  await page.goto('/');
+  await expect.poll(() => blockedSdk).toBeGreaterThan(0);
+  expect(await page.evaluate(() => typeof window.Twitch)).toBe('undefined');
+  await page.waitForFunction(() => restored);
+  const tile = page.locator('#grid [data-login="yt:ytlive00001"]');
+  await expect(tile).toHaveCount(1);
+  await expect(tile).toHaveAttribute('data-platform', 'youtube');
+  await expect.poll(() => page.evaluate(() => tiles.get('yt:ytlive00001')?.ready ?? null)).toBe(true);
+  expect(await page.evaluate(() => typeof window.Twitch)).toBe('undefined');
+  expect(blockedSdk).toBeGreaterThan(0);
+  expect(errors).toEqual([]);
+});
+
+test('a YouTube tile joins an empty layout, keeps its chat and restores with the Twitch SDK blocked', async ({ page }) => {
+  const errors = await setup(page);
+  let blockedSdk = 0;
+  await page.route('https://player.twitch.tv/js/embed/v1.js', r => {
+    blockedSdk++;
+    return r.abort();
+  });
+  await page.goto('/');
+  await expect.poll(() => blockedSdk).toBeGreaterThan(0);
+  expect(await page.evaluate(() => typeof window.Twitch)).toBe('undefined');
+  await expect(page.locator('#grid .tile')).toHaveCount(0);
+  await expect(page.locator('#empty')).toBeVisible();
+  await expect.poll(() => page.evaluate(() => restored)).toBe(true);
+
+  await page.locator('#q').fill('https://www.youtube.com/watch?v=ytlive00001');
+  const row = page.locator('#list [data-login="yt:ytlive00001"]');
+  await expect(row).toBeVisible();
+  await row.locator('.channel').click();
+  const tile = page.locator('#grid [data-login="yt:ytlive00001"]');
+  await expect(tile).toHaveCount(1);
+  await readyPlayers(page);
+  expect(await page.evaluate(() => tiles.get('yt:ytlive00001')?.channel.platform ?? null)).toBe('youtube');
+
+  await tile.locator('.chat-toggle').click();
+  await expect(tile.locator('.chat iframe')).toHaveAttribute(
+    'src',
+    /youtube\.com\/live_chat\?v=ytlive00001&embed_domain=localhost/,
+  );
+
+  // An empty layout still counts as restored, so the first tile is saved as soon as it joins.
+  const layout = await page.evaluate(() => JSON.parse(localStorage.getItem('tg.layout.guest')));
+  expect(layout.order).toContain('yt:ytlive00001');
+  expect(layout.channels.find(c => c.twitch === 'yt:ytlive00001')).toMatchObject({
+    platform: 'youtube',
+    youtubeId: 'ytlive00001',
+  });
+  expect(layout.chatOpen['yt:ytlive00001']).toBe(true);
+
+  await page.reload();
+  const restoredTile = page.locator('#grid [data-login="yt:ytlive00001"]');
+  await expect(restoredTile).toHaveCount(1);
+  await readyPlayers(page);
+  await expect
+    .poll(() => page.evaluate(() => tiles.get('yt:ytlive00001')?.ready ?? null))
+    .toBe(true);
+  await expect(restoredTile).toHaveAttribute('data-platform', 'youtube');
+  await expect(restoredTile.locator('.chat iframe')).toHaveAttribute(
+    'src',
+    /youtube\.com\/live_chat\?v=ytlive00001&embed_domain=localhost/,
+  );
+  await expect.poll(() => blockedSdk).toBeGreaterThanOrEqual(2);
+  expect(await page.evaluate(() => typeof window.Twitch)).toBe('undefined');
   expect(errors).toEqual([]);
 });

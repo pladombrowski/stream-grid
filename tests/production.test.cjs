@@ -13,6 +13,7 @@ test('production HTTP adapter preserves routing, validation and playlist rewriti
   assert.equal((await request('/api/stream?channel=abc', { method: 'POST' })).status, 405);
   assert.equal((await request('/api/search?q=a')).status, 400);
   assert.equal((await request('/api/extensions?channel=../private')).status, 400);
+  assert.equal((await request('/api/youtube?q=not-a-youtube-address')).status, 400);
   const nativeFetch = global.fetch;
   t.after(() => { global.fetch = nativeFetch; });
   global.fetch = (url, options) => {

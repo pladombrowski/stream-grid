@@ -739,4 +739,19 @@ export const translations: Record<string, [string, string]> = {
       "Twitch is a trademark of Twitch Interactive, Inc. Twitch grid is an independent project, not affiliated with Twitch.",
       "Twitch is een merk van Twitch Interactive, Inc. Twitch grid is een onafhankelijk project, niet verbonden aan Twitch.",
     ],
+  "Ouvrir sur YouTube ↗": ["Open on YouTube ↗", "Openen op YouTube ↗"],
+  "Chaîne YouTube": ["YouTube channel", "YouTube-kanaal"],
+  "Recherche sur YouTube…": ["Searching YouTube…", "Zoeken op YouTube…"],
+  "Aucune live YouTube pour cette adresse.": [
+    "No YouTube live at this address.",
+    "Geen YouTube-live op dit adres.",
+  ],
+  "La recherche YouTube est indisponible pour le moment.": [
+    "YouTube search is unavailable right now.",
+    "YouTube zoeken is momenteel niet beschikbaar.",
+  ],
+  "Le lecteur YouTube est indisponible. Recharge la page pour réessayer.": [
+    "The YouTube player is unavailable. Reload the page to try again.",
+    "De YouTube-speler is niet beschikbaar. Herlaad de pagina om het opnieuw te proberen.",
+  ],
 };
