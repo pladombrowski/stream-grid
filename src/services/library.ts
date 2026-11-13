@@ -66,12 +66,14 @@ function channel(data: TwitchChannelData): Channel {
 }
 class TwitchLibrary {
   clientId: string;
+  authUrl: string;
   token: string;
   user: TwitchSession | null;
   profiles: Map<string, Channel>;
   generation: number;
-  constructor(clientId: string) {
+  constructor(clientId: string, authUrl = "") {
     this.clientId = clientId;
+    this.authUrl = authUrl;
     this.token = "";
     this.user = null;
     this.profiles = new Map();
@@ -118,6 +120,12 @@ class TwitchLibrary {
           "Autorise le stockage de session dans ton navigateur pour connecter Twitch.",
         ),
       );
+    if (this.authUrl) {
+      const target = new URL(this.authUrl, location.origin);
+      target.searchParams.set("state", state);
+      location.assign(target.toString());
+      return;
+    }
     const params = new URLSearchParams({
       client_id: this.clientId,
       response_type: "token",

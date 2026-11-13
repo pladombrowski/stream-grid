@@ -6,13 +6,17 @@ let retryAt = 0;
 class SearchError extends Error {
   constructor(status, code) { super(code); this.status = status; this.code = code; }
 }
+// The integrated deployment reuses the Twitch SO Bot application; dedicated
+// TWITCH_SEARCH_* values still win when a separate search app is configured.
+const searchClientId = () => process.env.TWITCH_SEARCH_CLIENT_ID || process.env.TWITCH_CLIENT_ID;
+const searchClientSecret = () => process.env.TWITCH_SEARCH_CLIENT_SECRET || process.env.TWITCH_CLIENT_SECRET;
 async function accessToken() {
   if (token && token.expiresAt > Date.now() + 60000) return token.value;
   if (!tokenRequest) tokenRequest = (async () => {
     const response = await fetch('https://id.twitch.tv/oauth2/token', {
       method: 'POST', signal: AbortSignal.timeout(8000),
-      body: new URLSearchParams({ client_id: process.env.TWITCH_SEARCH_CLIENT_ID,
-        client_secret: process.env.TWITCH_SEARCH_CLIENT_SECRET, grant_type: 'client_credentials' })
+      body: new URLSearchParams({ client_id: searchClientId(),
+        client_secret: searchClientSecret(), grant_type: 'client_credentials' })
     });
     if (!response.ok) throw new SearchError(503, 'SEARCH_UNAVAILABLE');
     const data = await response.json();
@@ -25,7 +29,7 @@ async function accessToken() {
 async function helix(endpoint, params, retry = true) {
   const value = await accessToken();
   const response = await fetch('https://api.twitch.tv/helix/' + endpoint + '?' + new URLSearchParams(params), {
-    headers: { Authorization: 'Bearer ' + value, 'Client-Id': process.env.TWITCH_SEARCH_CLIENT_ID },
+    headers: { Authorization: 'Bearer ' + value, 'Client-Id': searchClientId() },
     signal: AbortSignal.timeout(8000)
   });
   if (response.status === 401 && retry) {
@@ -107,7 +111,7 @@ module.exports = async function search(req, res) {
     ? params.has('q') || logins.length > 100 || logins.some(login => !/^[a-z0-9_]{1,25}$/.test(login))
     : !query || query.length < 2 || query.length > 100 || /[\x00-\x1f]/.test(query);
   if (invalid) return res.status(400).json({ error: 'INVALID_QUERY' });
-  if (!process.env.TWITCH_SEARCH_CLIENT_ID || !process.env.TWITCH_SEARCH_CLIENT_SECRET) return res.status(503).json({ error: 'SEARCH_UNAVAILABLE' });
+  if (!searchClientId() || !searchClientSecret()) return res.status(503).json({ error: 'SEARCH_UNAVAILABLE' });
   const names = [...new Set(logins)].sort();
   const key = collaborative ? 'collaboration:' + collaborationLogin : exact ? 'logins:' + names.join(',') : 'query:' + query.toLowerCase(), now = Date.now();
   const respond = data => {

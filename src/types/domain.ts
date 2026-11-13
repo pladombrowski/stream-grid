@@ -56,6 +56,10 @@ export interface TwitchSession {
   login: string;
   scopes: string[];
 }
+export interface SiteConfig {
+  twitchClientId?: string;
+  twitchAuthUrl?: string;
+}
 export interface LayoutSnapshot {
   order?: string[];
   focused?: string | null;

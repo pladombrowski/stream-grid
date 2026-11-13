@@ -11,6 +11,7 @@
     "og:generate": "node scripts/render-share-image.cjs",
     "test:server": "node --test tests/stream.test.cjs tests/search.test.cjs tests/extensions.test.cjs tests/extensionWindowGeometry.test.cjs tests/extensionsService.test.cjs tests/extensionWindows.test.cjs tests/youtube.test.cjs tests/i18n.test.cjs tests/watchtime.test.cjs tests/production.test.cjs tests/server-cli.test.cjs tests/branding.test.cjs",
     "build": "pnpm check && vite build",
+    "build:grid": "pnpm check && VITE_BASE=/grid/ vite build",
     "preview": "vite preview --host localhost --port 8765",
     "format": "prettier --write src vite.config.mts",
     "start": "node production.cjs"

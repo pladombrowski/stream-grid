@@ -10,7 +10,7 @@ test("package and HTML metadata use the Stream Grid name", () => {
   assert.equal(JSON.parse(read("package.json")).name, "stream-grid");
   const html = read("index.html");
   assert.match(html, /<title>Stream Grid<\/title>/);
-  assert.match(html, /href="https:\/\/stream-grid\.caelmai\.com\/"/);
+  assert.match(html, /href="https:\/\/twitchso\.com\/grid\/"/);
   assert.doesNotMatch(html, /Twitch grid|twitch\.moinax\.com/);
 });
 

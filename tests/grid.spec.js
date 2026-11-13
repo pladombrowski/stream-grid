@@ -3908,3 +3908,23 @@ test('a YouTube tile joins an empty layout, keeps its chat and restores with the
   expect(await page.evaluate(() => typeof window.Twitch)).toBe('undefined');
   expect(errors).toEqual([]);
 });
+test('backend auth bridge receives the OAuth state', async ({ page }) => {
+  const errors = [];
+  page.on('pageerror', e => errors.push(e.message));
+  await page.addInitScript(() => sessionStorage.setItem('tg.landing', 'true'));
+  await page.route('**/config.json', r => r.fulfill({
+    json: { twitchClientId: 'test-client', twitchAuthUrl: '/grid/auth/start' },
+  }));
+  await page.route(/\/grid\/auth\/start\?/, r => r.fulfill({
+    contentType: 'text/html',
+    body: 'auth bridge',
+  }));
+  await page.goto('/');
+  await page.locator('#connect').click();
+  await page.waitForURL(url => url.pathname === '/grid/auth/start');
+  const state = new URL(page.url()).searchParams.get('state');
+  expect(state).toMatch(/^[a-f0-9]{48}$/);
+  const stored = await page.evaluate(() => JSON.parse(sessionStorage.getItem('tg.oauth')));
+  expect(stored.state).toBe(state);
+  expect(errors).toEqual([]);
+});

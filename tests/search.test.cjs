@@ -96,6 +96,7 @@ test('invalid queries and unsupported methods do not call Twitch', async () => {
 });
 test('missing credentials return a non-cacheable error', async () => {
   delete process.env.TWITCH_SEARCH_CLIENT_SECRET;
+  delete process.env.TWITCH_CLIENT_SECRET;
   const res=await request(); assert.equal(res.statusCode,503); assert.equal(res.headers['Cache-Control'],'no-store'); assert.equal(calls.length,0);
 });
 test('revoked app tokens are renewed once', async () => {

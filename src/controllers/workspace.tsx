@@ -3689,7 +3689,7 @@ export function startWorkspace(
     loadPlayer();
     let config;
     try {
-      const response = await fetch("/config.json", {
+      const response = await fetch(`${import.meta.env.BASE_URL}config.json`, {
         cache: "no-store",
         signal: AbortSignal.timeout(12000),
       });
@@ -3703,7 +3703,10 @@ export function startWorkspace(
       );
     }
     if (lifecycle.disposed) return;
-    library = new TwitchLibrary(config?.twitchClientId || "");
+    library = new TwitchLibrary(
+      config?.twitchClientId || "",
+      config?.twitchAuthUrl || "",
+    );
     try {
       if (library.clientId) await library.resume();
     } catch (cause) {

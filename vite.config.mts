@@ -32,6 +32,7 @@ function installSearch(middlewares: Connect.Server) {
 export default defineConfig(({ mode }) => {
   Object.assign(process.env, loadEnv(mode, process.cwd(), "TWITCH_SEARCH_"));
   return {
+    base: process.env.VITE_BASE || "/",
     plugins: [
       react(),
       tailwindcss(),

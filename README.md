@@ -2,7 +2,7 @@
 
 Watch several Twitch and YouTube live streams on one screen, arrange their tiles, put one in spotlight, and choose the sound for each stream.
 
-Site: https://stream-grid.caelmai.com
+Site: https://twitchso.com/grid/
 
 ## Development
 
@@ -159,18 +159,20 @@ Collaboration indicators use Twitch shared-chat sessions in both account modes. 
 
 ## Twitch configuration
 
-Create an application in the [Twitch developer console](https://dev.twitch.tv/console/apps). The visitor login application is Public and needs no client secret. Set its client ID in `public/config.json`, under `twitchClientId`. An empty ID disables login while keeping local favorites available.
+The current production deployment is integrated into the Twitch SO Bot site at `https://twitchso.com/grid/`. It reuses the bot's existing Confidential Twitch application and its already-registered callback `https://twitchso.com/auth/callback`, so no Twitch developer-console change is needed.
 
-Register the exact OAuth return addresses, including `http://localhost:8765` for local development and the production origin `https://stream-grid.caelmai.com`, without a trailing slash. Login uses Twitch's implicit OAuth flow with only `user:read:follows`. The login application belongs to the fork owner. Login only works on the registered origins, so use production or localhost to connect Twitch; preview deployment URLs are not registered.
+`public/config.json` contains only the public client ID and the backend bridge:
 
-Guest search uses a separate Confidential Twitch application. Set these server environment variables in `.env.local` for local development and in the production service environment for deployment:
-
-```dotenv
-TWITCH_SEARCH_CLIENT_ID=your-confidential-client-id
-TWITCH_SEARCH_CLIENT_SECRET=your-confidential-client-secret
+```json
+{
+  "twitchClientId": "your-public-client-id",
+  "twitchAuthUrl": "/grid/auth/start"
+}
 ```
 
-The secret and app token stay on the server. The public login client ID remains separate. Restart local development after changing environment variables, and redeploy after changing Vercel configuration.
+When `twitchAuthUrl` is set, the Connect button sends the visitor to the FastAPI bridge. The bridge runs the authorization-code flow server-side with only `user:read:follows`, then returns the user token to the SPA in the URL fragment. The Twitch client secret never reaches the browser. The SPA still validates the token with Twitch and keeps the existing state check before accepting it. An empty `twitchClientId` disables login while keeping local favorites available; an empty `twitchAuthUrl` falls back to Twitch's implicit flow for a standalone public-client deployment.
+
+The guest search endpoint uses `TWITCH_SEARCH_CLIENT_ID` and `TWITCH_SEARCH_CLIENT_SECRET` when they are set. On the integrated server the bot's `TWITCH_CLIENT_ID` and `TWITCH_CLIENT_SECRET` are used as a fallback, so the same Twitch application serves login, search, and the bot. The secret and app token stay on the server. Restart local development after changing environment variables, and redeploy after changing the server environment.
 
 `GET /api/search?q=…` accepts 2 to 100 characters. It checks exact usernames with Get Users so channels omitted by Search Channels remain discoverable, then verifies live status with Get Streams. Repeated `login` parameters refresh up to 100 channels in one request. A `collaboration` parameter retrieves shared-chat participants.
 
@@ -178,11 +180,17 @@ The server caches successful results for one minute, shares concurrent requests,
 
 ## Deployment and share image
 
-Production is a Vercel project connected to `pladombrowski/stream-grid`, served at `https://stream-grid.caelmai.com`. Vercel runs `pnpm build`, serves `dist`, and exposes the files in `api/` as serverless functions for `/api/search`, `/api/stream`, `/api/extensions` and `/api/youtube`.
+Production currently runs on the Oracle server behind `https://twitchso.com/grid/`. Build the subpath bundle with:
 
-Import the repository in the Vercel dashboard, keep the Vite preset and Node.js 24, and set `TWITCH_SEARCH_CLIENT_ID` and `TWITCH_SEARCH_CLIENT_SECRET` for Production and Preview. Add `stream-grid.caelmai.com` as the project domain and create the DNS record Vercel shows; the CNAME target may be project-specific. Pushes to `main` deploy automatically; pull requests get preview deployments.
+```sh
+pnpm build:grid
+```
 
-The API uses only Node built-ins. The two Twitch search credentials stay in Vercel environment variables and are never committed. Favorites, grids and Twitch sessions remain in each browser's local storage on the production origin. The browser storage keys keep their historical `tg.` prefix, so this version and earlier versions on the same origin keep reading the same saved data. A different origin starts with empty browser storage; nothing is migrated.
+Copy the contents of `dist/` to `/home/ubuntu/twitch-so-bot-site/grid/` on the server. The FastAPI app serves that directory at `/grid` and proxies `/api/search`, `/api/stream`, `/api/extensions` and `/api/youtube` to the loopback Node process on `127.0.0.1:8766`. That process runs `production.cjs` from `api/`, uses only Node built-ins, and is managed by `stream-grid-api.service`. The bot's existing `twitch-so-bot.service` stays on port 5000 and is not replaced.
+
+The Vercel setup remains a valid standalone alternative: connect `pladombrowski/stream-grid`, run `pnpm build`, serve `dist`, and expose `api/` as serverless functions. Set `TWITCH_SEARCH_CLIENT_ID` and `TWITCH_SEARCH_CLIENT_SECRET` for Production and Preview. On the Oracle deployment those values are optional because the API falls back to the bot's Twitch credentials.
+
+Favorites, grids and Twitch sessions remain in each browser's local storage on the production origin. The browser storage keys keep their historical `tg.` prefix, so this version and earlier versions on the same origin keep reading the same saved data. A different origin starts with empty browser storage; nothing is migrated.
 
 Open Graph and Twitter metadata remain in the HTML entry point. They reference the committed 1200 × 630 image at `public/assets/share-card.png`. Regenerate it after changing the landing hero:
 
