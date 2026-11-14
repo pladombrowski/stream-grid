@@ -55,10 +55,12 @@ export interface TwitchSession {
   user_id: string;
   login: string;
   scopes: string[];
+  expires_in?: number;
 }
 export interface SiteConfig {
   twitchClientId?: string;
   twitchAuthUrl?: string;
+  twitchSessionUrl?: string;
 }
 export interface LayoutSnapshot {
   order?: string[];

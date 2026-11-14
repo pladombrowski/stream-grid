@@ -67,17 +67,23 @@ function channel(data: TwitchChannelData): Channel {
 class TwitchLibrary {
   clientId: string;
   authUrl: string;
+  sessionUrl: string;
   token: string;
   user: TwitchSession | null;
   profiles: Map<string, Channel>;
   generation: number;
-  constructor(clientId: string, authUrl = "") {
+  expiresAt: number;
+  refreshing: boolean;
+  constructor(clientId: string, authUrl = "", sessionUrl = "") {
     this.clientId = clientId;
     this.authUrl = authUrl;
+    this.sessionUrl = sessionUrl;
     this.token = "";
     this.user = null;
     this.profiles = new Map();
     this.generation = 0;
+    this.expiresAt = 0;
+    this.refreshing = false;
   }
   async validate(token = this.token) {
     const generation = this.generation;
@@ -106,9 +112,29 @@ class TwitchLibrary {
     if (generation !== this.generation) return null;
     this.token = token;
     this.user = user;
+    this.expiresAt = Date.now() + (Number(user.expires_in) || 0) * 1000;
     if (writeStored("tg.session", token))
       sessionStorage.removeItem("tg.session");
     return user;
+  }
+  async refreshSession() {
+    if (!this.sessionUrl || this.refreshing) return null;
+    this.refreshing = true;
+    try {
+      const response = await fetch(this.sessionUrl, {
+        credentials: "same-origin",
+        cache: "no-store",
+        signal: AbortSignal.timeout(12000),
+      });
+      if (!response.ok) return null;
+      const data = await response.json();
+      if (!data?.access_token) return null;
+      return await this.validate(data.access_token);
+    } catch {
+      return null;
+    } finally {
+      this.refreshing = false;
+    }
   }
   async connect() {
     const state = Array.from(crypto.getRandomValues(new Uint8Array(24)), (b) =>
@@ -173,16 +199,33 @@ class TwitchLibrary {
       const token =
         readStored("tg.session", "") ||
         readStored("tg.session", "", sessionStorage);
-      if (token) await this.validate(token);
+      if (token) {
+        try {
+          await this.validate(token);
+          return;
+        } catch (error) {
+          const refreshed = await this.refreshSession();
+          if (refreshed) return;
+          throw error;
+        }
+      }
+      await this.refreshSession();
     }
   }
   disconnect() {
     this.generation++;
     this.token = "";
     this.user = null;
+    this.expiresAt = 0;
     localStorage.removeItem("tg.session");
     sessionStorage.removeItem("tg.session");
     sessionStorage.removeItem("tg.oauth");
+    if (this.sessionUrl)
+      void fetch(this.sessionUrl, {
+        method: "DELETE",
+        credentials: "same-origin",
+        keepalive: true,
+      }).catch(() => {});
   }
   async get(
     endpoint: string,

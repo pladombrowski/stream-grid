@@ -166,11 +166,14 @@ The current production deployment is integrated into the Twitch SO Bot site at `
 ```json
 {
   "twitchClientId": "your-public-client-id",
-  "twitchAuthUrl": "/grid/auth/start"
+  "twitchAuthUrl": "/grid/auth/start",
+  "twitchSessionUrl": "/grid/auth/session"
 }
 ```
 
 When `twitchAuthUrl` is set, the Connect button sends the visitor to the FastAPI bridge. The bridge runs the authorization-code flow server-side with only `user:read:follows`, then returns the user token to the SPA in the URL fragment. The Twitch client secret never reaches the browser. The SPA still validates the token with Twitch and keeps the existing state check before accepting it. An empty `twitchClientId` disables login while keeping local favorites available; an empty `twitchAuthUrl` falls back to Twitch's implicit flow for a standalone public-client deployment.
+
+Authorization-code access tokens last only a few hours, so the bridge also stores the refresh token in the bot's `grid_sessions` table and sets an HttpOnly `grid_session` cookie. `GET /grid/auth/session` rotates that refresh token and returns a fresh access token; the SPA calls it at startup when its stored token is missing or expired, and hourly while the page stays open. `DELETE /grid/auth/session` drops the server session when the visitor disconnects. Twitch chat remains Twitch's own iframe: its login uses Twitch's cookies and is separate from the grid session, so a browser that blocks third-party cookies may still ask for chat login independently.
 
 The guest search endpoint uses `TWITCH_SEARCH_CLIENT_ID` and `TWITCH_SEARCH_CLIENT_SECRET` when they are set. On the integrated server the bot's `TWITCH_CLIENT_ID` and `TWITCH_CLIENT_SECRET` are used as a fallback, so the same Twitch application serves login, search, and the bot. The secret and app token stay on the server. Restart local development after changing environment variables, and redeploy after changing the server environment.
 

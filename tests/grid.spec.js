@@ -3928,3 +3928,42 @@ test('backend auth bridge receives the OAuth state', async ({ page }) => {
   expect(stored.state).toBe(state);
   expect(errors).toEqual([]);
 });
+test('an expired Twitch token is renewed from the server session', async ({ page }) => {
+  const errors = await setup(page);
+  await api(page);
+  await page.addInitScript(() => localStorage.setItem('tg.session', JSON.stringify('expired-token')));
+  await page.route('**/config.json', r => r.fulfill({
+    json: {
+      twitchClientId: 'test-client',
+      twitchAuthUrl: '/grid/auth/start',
+      twitchSessionUrl: '/grid/auth/session',
+    },
+  }));
+  let refreshed = 0;
+  await page.route('**/grid/auth/session', r => {
+    if (r.request().method() === 'GET') {
+      refreshed++;
+      return r.fulfill({ json: { access_token: 'fresh-token' } });
+    }
+    return r.fulfill({ json: { ok: true } });
+  });
+  await page.route('https://id.twitch.tv/oauth2/validate', r => {
+    const authorization = r.request().headers()['authorization'] || '';
+    if (authorization.includes('expired-token'))
+      return r.fulfill({ status: 401, json: { message: 'invalid token' } });
+    return r.fulfill({
+      json: {
+        client_id: 'test-client',
+        user_id: '42',
+        login: 'moinax',
+        scopes: ['user:read:follows'],
+        expires_in: 3600,
+      },
+    });
+  });
+  await page.goto('/');
+  await expect(page.locator('#disconnect')).toBeVisible();
+  expect(refreshed).toBe(1);
+  expect(await page.evaluate(() => localStorage.getItem('tg.session'))).toContain('fresh-token');
+  expect(errors).toEqual([]);
+});

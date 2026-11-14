@@ -888,3 +888,25 @@ Expected: both services `active`, `bot:200`, `grid:200`, `api:200`.
 - [x] `.env.example` sanitized so the previously committed Twitch secret is replaced by placeholders. Rotating that exposed secret in the Twitch developer console remains a manual security follow-up.
 
 The only step that cannot be automated from this workstation is the final Twitch account authorization click on `www.twitch.tv`; the redirect chain up to that page is verified.
+
+---
+
+## Follow-up: Session Persistence (2026-11-14)
+
+**Reported symptom:** login works, but the visitor has to connect Twitch again after reopening the page, unlike the old implicit flow that stayed logged in.
+
+**Root cause:** Twitch's authorization-code access token expires in a few hours (the token response shows `expires_in` around 14,000 seconds). The old implicit flow's token lasted much longer. The bridge was discarding the refresh token, so once the access token expired the SPA had no way to renew it and `validate()` correctly sent the visitor back to guest mode.
+
+**Fix:**
+- The callback stores the refresh token in the new `grid_sessions` PostgreSQL table and sets an HttpOnly `grid_session` cookie scoped to `/grid`.
+- `GET /grid/auth/session` rotates the refresh token with Twitch and returns a fresh access token; `DELETE /grid/auth/session` removes the server session on disconnect.
+- The SPA reads `twitchSessionUrl` from `public/config.json`, tries the stored access token first, and falls back to the server session when it is missing or expired.
+- The hourly check refreshes through the server session before validating, and a 401 from the Twitch API triggers one refresh-and-retry before disconnecting.
+
+**Verification:**
+- 161 Playwright tests pass, including `an expired Twitch token is renewed from the server session`.
+- The server-side refresh was exercised with a mocked Twitch token endpoint: the response returned a new access token, rotated the DB row, and set the `grid_session` cookie; logout deleted the row.
+- The callback was exercised with a mocked authorization-code exchange: it stored the refresh token in `grid_sessions`, set the cookie, and redirected to `/grid/` with the access token in the fragment.
+- `grid_sessions` exists in the production PostgreSQL database and `/grid/auth/session` returns `401 NO_SESSION` without a cookie.
+
+**Remaining real-account step:** the user must complete one Twitch authorization in a supported browser. The chat iframe is owned by Twitch and uses Twitch's own cookies, so third-party-cookie blocking can still require a separate chat login.

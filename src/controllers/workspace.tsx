@@ -3451,11 +3451,23 @@ export function startWorkspace(
     }
   }
 
-  function handleError(error: unknown) {
+  let refreshAttempted = false;
+  async function handleError(error: unknown) {
     const failure =
       error instanceof Error ? (error as HttpError) : new Error(String(error));
-    if (failure instanceof HttpError && failure.status === 401)
+    if (failure instanceof HttpError && failure.status === 401) {
+      if (!refreshAttempted) {
+        refreshAttempted = true;
+        const refreshed = await library?.refreshSession();
+        if (refreshed) {
+          await refresh();
+          refreshAttempted = false;
+          return;
+        }
+        refreshAttempted = false;
+      }
       disconnect(false);
+    }
     notice(failure.message);
   }
   async function refresh() {
@@ -3706,6 +3718,7 @@ export function startWorkspace(
     library = new TwitchLibrary(
       config?.twitchClientId || "",
       config?.twitchAuthUrl || "",
+      config?.twitchSessionUrl || "",
     );
     try {
       if (library.clientId) await library.resume();
@@ -3791,7 +3804,8 @@ export function startWorkspace(
   setInterval(async () => {
     if (!library?.user) return;
     try {
-      await library.validate();
+      const refreshed = await library.refreshSession();
+      if (!refreshed) await library.validate();
     } catch (cause) {
       const error =
         cause instanceof Error
