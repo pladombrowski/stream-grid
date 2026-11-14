@@ -907,6 +907,6 @@ The only step that cannot be automated from this workstation is the final Twitch
 - 161 Playwright tests pass, including `an expired Twitch token is renewed from the server session`.
 - The server-side refresh was exercised with a mocked Twitch token endpoint: the response returned a new access token, rotated the DB row, and set the `grid_session` cookie; logout deleted the row.
 - The callback was exercised with a mocked authorization-code exchange: it stored the refresh token in `grid_sessions`, set the cookie, and redirected to `/grid/` with the access token in the fragment.
-- `grid_sessions` exists in the production PostgreSQL database and `/grid/auth/session` returns `401 NO_SESSION` without a cookie.
+- `grid_sessions` exists in the production PostgreSQL database and `/grid/auth/session` returns `204 No Content` without a cookie, so guests do not see a failed request in the console. An expired server session returns `401 SESSION_EXPIRED`.
 
 **Remaining real-account step:** the user must complete one Twitch authorization in a supported browser. The chat iframe is owned by Twitch and uses Twitch's own cookies, so third-party-cookie blocking can still require a separate chat login.

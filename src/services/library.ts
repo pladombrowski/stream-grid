@@ -126,7 +126,7 @@ class TwitchLibrary {
         cache: "no-store",
         signal: AbortSignal.timeout(12000),
       });
-      if (!response.ok) return null;
+      if (!response.ok || response.status === 204) return null;
       const data = await response.json();
       if (!data?.access_token) return null;
       return await this.validate(data.access_token);
