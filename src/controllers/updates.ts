@@ -10,8 +10,8 @@ export function watchForUpdates(
   lifecycle.setInterval(async () => {
     try {
       const parts = await Promise.all(
-        ["/index.html", "/config.json"].map(async (path) => {
-          const response = await fetch(path, {
+        ["index.html", "config.json"].map(async (path) => {
+          const response = await fetch(import.meta.env.BASE_URL + path, {
             cache: "no-store",
             signal: lifecycle.signal,
           });

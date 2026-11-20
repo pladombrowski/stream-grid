@@ -910,3 +910,20 @@ The only step that cannot be automated from this workstation is the final Twitch
 - `grid_sessions` exists in the production PostgreSQL database and `/grid/auth/session` returns `204 No Content` without a cookie, so guests do not see a failed request in the console. An expired server session returns `401 SESSION_EXPIRED`.
 
 **Remaining real-account step:** existing sessions created before this fix have no refresh token, so the user must complete one final Twitch authorization in a supported browser. That login creates the `grid_sessions` row and the HttpOnly cookie; subsequent opens renew the access token automatically. The chat iframe is owned by Twitch and uses Twitch's own cookies, so third-party-cookie blocking can still require a separate chat login.
+
+## Follow-up: Chat Login (2026-11-20)
+
+**Reported symptom:** the grid session stayed valid, but Twitch chat asked for a login, opened the Twitch popup, accepted the credentials, and reloaded logged out.
+
+**Root cause:** the inline chat is Twitch's cross-origin iframe. Its popup writes Twitch's own first-party cookies; the iframe then needs those cookies as a third-party context. With third-party cookies blocked or partitioned, Twitch's iframe reloads without an `auth-token` even though the Stream Grid session is authenticated. The popup reports success, so the UI appears to lose the login.
+
+**Fix:**
+- The grid OAuth scope now includes `chat:read chat:edit` in addition to `user:read:follows`.
+- A logged-in viewer reads and sends chat through Twitch's IRC WebSocket gateway with the Stream Grid access token. No third-party Twitch cookies are involved.
+- Twitch's official chat iframe remains for guests and for sessions created before the chat scopes. A prompt above the iframe connects or reconnects Twitch once; that authorization adds the chat scopes and switches the tile to the native chat.
+- The native chat renders names, colors, timestamps, action messages, system notices and Twitch emotes, keeps the last 200 messages, reconnects with backoff, and refreshes the Twitch token after an IRC authentication failure.
+
+**Deployment:**
+- `pnpm build:grid` and replace `/home/ubuntu/twitch-so-bot-site/grid/`.
+- Update `backend/routers/grid_oauth.py` on the server and restart `twitch-so-bot.service`.
+- Existing grid sessions must authorize once more to grant `chat:read` and `chat:edit`; the chat prompt handles that path.

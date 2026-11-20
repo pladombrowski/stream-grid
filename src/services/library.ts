@@ -85,6 +85,12 @@ class TwitchLibrary {
     this.expiresAt = 0;
     this.refreshing = false;
   }
+  canChat() {
+    return (
+      !!this.user?.scopes?.includes("chat:read") &&
+      !!this.user?.scopes?.includes("chat:edit")
+    );
+  }
   async validate(token = this.token) {
     const generation = this.generation;
     const response = await fetch("https://id.twitch.tv/oauth2/validate", {
@@ -156,7 +162,7 @@ class TwitchLibrary {
       client_id: this.clientId,
       response_type: "token",
       redirect_uri: location.origin,
-      scope: "user:read:follows",
+      scope: "user:read:follows chat:read chat:edit",
       state,
     });
     location.assign("https://id.twitch.tv/oauth2/authorize?" + params);
@@ -212,7 +218,7 @@ class TwitchLibrary {
       await this.refreshSession();
     }
   }
-  disconnect() {
+  forget() {
     this.generation++;
     this.token = "";
     this.user = null;
@@ -220,6 +226,9 @@ class TwitchLibrary {
     localStorage.removeItem("tg.session");
     sessionStorage.removeItem("tg.session");
     sessionStorage.removeItem("tg.oauth");
+  }
+  disconnect() {
+    this.forget();
     if (this.sessionUrl)
       void fetch(this.sessionUrl, {
         method: "DELETE",

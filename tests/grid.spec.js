@@ -1385,7 +1385,7 @@ test('the landing covers the app until the visitor continues without an account,
   await page.waitForURL('https://id.twitch.tv/oauth2/authorize?**');
   const url = new URL(page.url());
   expect(url.searchParams.get('client_id')).toBe('test-client');
-  expect(url.searchParams.get('scope')).toBe('user:read:follows');
+  expect(url.searchParams.get('scope')).toBe('user:read:follows chat:read chat:edit');
   expect(errors).toEqual([]);
 });
 test('only open tiles hide the welcome, regardless of favorites or an old guest preference', async ({ page }) => {
@@ -1418,7 +1418,7 @@ test('primary welcome action starts Twitch authorization', async ({ page }) => {
   await page.goto('/');
   await page.locator('#top').click();
   await page.waitForURL('https://id.twitch.tv/oauth2/authorize?**');
-  expect(new URL(page.url()).searchParams.get('scope')).toBe('user:read:follows');
+  expect(new URL(page.url()).searchParams.get('scope')).toBe('user:read:follows chat:read chat:edit');
 });
 test('guest search renders API results and saves a favorite without authentication', async ({page}) => {
   const errors=await setup(page,true); await page.goto('/'); await page.locator('#guest').click();
@@ -3965,5 +3965,102 @@ test('an expired Twitch token is renewed from the server session', async ({ page
   await expect(page.locator('#disconnect')).toBeVisible();
   expect(refreshed).toBe(1);
   expect(await page.evaluate(() => localStorage.getItem('tg.session'))).toContain('fresh-token');
+  expect(errors).toEqual([]);
+});
+
+async function connectedChat(page, scopes) {
+  const errors = await setup(page, true);
+  await api(page);
+  await page.setViewportSize({ width: 1400, height: 900 });
+  await page.addInitScript(() => localStorage.setItem('tg.session', JSON.stringify('fake-token')));
+  await page.route('**/config.json', r => r.fulfill({
+    json: {
+      twitchClientId: 'test-client',
+      twitchAuthUrl: '/grid/auth/start',
+      twitchSessionUrl: '/grid/auth/session',
+    },
+  }));
+  await page.route('https://id.twitch.tv/oauth2/validate', r => r.fulfill({
+    json: {
+      client_id: 'test-client',
+      user_id: '42',
+      login: 'moinax',
+      scopes,
+      expires_in: 3600,
+    },
+  }));
+  return errors;
+}
+async function openChat(page) {
+  await page.goto('/');
+  await expect(page.locator('#disconnect')).toBeVisible();
+  await page.locator('#list [data-login="live"] .channel').click();
+  await page.locator('#toggle').click();
+  await page.locator('#grid .tile .chat-toggle').click();
+  await expect(page.locator('#grid .tile .chat')).toBeVisible();
+}
+test('a Stream Grid login reads and sends chat without Twitch iframe cookies', async ({ page }) => {
+  const errors = await connectedChat(page, ['user:read:follows', 'chat:read', 'chat:edit']);
+  const sent = [];
+  await page.routeWebSocket('wss://irc-ws.chat.twitch.tv/**', ws => {
+    ws.onMessage(message => {
+      sent.push(message);
+      if (message.includes('JOIN #live')) {
+        ws.send(':tmi.twitch.tv 001 moinax :Welcome, GLHF!\r\n');
+        ws.send('@badges=moderator/1;color=#ff0000;display-name=Mo;emotes=25:0-4/emotesv2_d6ab71c91fa749d294fd2ac42eb51966:17-25;id=one;tmi-sent-ts=1700000000000; :mo!mo@mo.tmi.twitch.tv PRIVMSG #live :Kappa hello grid enkeoLove\r\n');
+      }
+    });
+  });
+  await openChat(page);
+  await expect(page.locator('.native-chat')).toBeVisible();
+  await expect(page.locator('#grid .tile .chat iframe')).toHaveCount(0);
+  await expect(page.locator('.native-chat-message')).toContainText('hello grid');
+  await expect(page.locator('.native-chat-name')).toHaveText('Mo');
+  await expect(page.locator('.native-chat-emote')).toHaveCount(2);
+  await expect(page.locator('.native-chat-emote').first()).toHaveAttribute('src', /emoticons\/v2\/25\/default\/dark\/1\.0/);
+  await expect(page.locator('.native-chat-emote').last()).toHaveAttribute('src', /emoticons\/v2\/emotesv2_d6ab71c91fa749d294fd2ac42eb51966\/default\/dark\/1\.0/);
+  expect(sent.some(line => line.includes('PASS oauth:fake-token'))).toBe(true);
+  expect(sent.some(line => line.includes('NICK moinax'))).toBe(true);
+  expect(sent.some(line => line.includes('JOIN #live'))).toBe(true);
+  await page.locator('.native-chat-input').fill('hi from the grid');
+  await page.locator('.native-chat-input').press('Enter');
+  await expect.poll(() => sent.some(line => line.includes('PRIVMSG #live :hi from the grid'))).toBe(true);
+  expect(errors).toEqual([]);
+});
+test('a Stream Grid login without chat scopes offers one reconnection', async ({ page }) => {
+  const errors = await connectedChat(page, ['user:read:follows']);
+  await page.route(/\/grid\/auth\/start\?/, r => r.fulfill({ contentType: 'text/html', body: 'auth bridge' }));
+  await openChat(page);
+  const prompt = page.locator('.native-chat-prompt');
+  await expect(prompt).toContainText('Reconnecte Twitch pour envoyer des messages.');
+  await expect(page.locator('#grid .tile .chat iframe')).toHaveCount(1);
+  await prompt.locator('button').click();
+  await page.waitForURL(url => url.pathname === '/grid/auth/start');
+  expect(errors).toEqual([]);
+});
+test('a transient sign-in failure keeps the server session for a later refresh', async ({ page }) => {
+  const errors = await setup(page, true);
+  await page.addInitScript(() => localStorage.setItem('tg.session', JSON.stringify('expired-token')));
+  await page.route('**/config.json', r => r.fulfill({
+    json: {
+      twitchClientId: 'test-client',
+      twitchAuthUrl: '/grid/auth/start',
+      twitchSessionUrl: '/grid/auth/session',
+    },
+  }));
+  let deletes = 0, gets = 0;
+  await page.route('**/grid/auth/session', r => {
+    if (r.request().method() === 'DELETE') {
+      deletes++;
+      return r.fulfill({ json: { ok: true } });
+    }
+    gets++;
+    return r.fulfill({ status: 503, json: { error: 'TEMPORARY' } });
+  });
+  await page.route('https://id.twitch.tv/oauth2/validate', r => r.fulfill({ status: 500, body: 'temporary' }));
+  await page.goto('/');
+  await expect(page.locator('#connect')).toBeVisible();
+  expect(gets).toBe(1);
+  expect(deletes).toBe(0);
   expect(errors).toEqual([]);
 });

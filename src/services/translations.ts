@@ -157,6 +157,25 @@ export const translations: Record<string, [string, string]> = {
   Left: ["Left", "Links"],
   Right: ["Right", "Rechts"],
   "Chat de {name}": ["Chat for {name}", "Chat van {name}"],
+  "Envoyer un message": ["Send a message", "Bericht verzenden"],
+  "Connexion au chat…": ["Connecting to chat…", "Verbinden met chat…"],
+  "Chat déconnecté. Reconnexion…": [
+    "Chat disconnected. Reconnecting…",
+    "Chat losgekoppeld. Opnieuw verbinden…",
+  ],
+  "Impossible de se connecter au chat.": [
+    "Unable to connect to chat.",
+    "Kan geen verbinding maken met chat.",
+  ],
+  "Connecte Twitch pour envoyer des messages.": [
+    "Sign in to Twitch to send messages.",
+    "Meld je aan bij Twitch om berichten te sturen.",
+  ],
+  "Reconnecte Twitch pour envoyer des messages.": [
+    "Reconnect Twitch to send messages.",
+    "Verbind Twitch opnieuw om berichten te sturen.",
+  ],
+  "Reconnecter Twitch": ["Reconnect Twitch", "Twitch opnieuw verbinden"],
   "Stream de {name}": ["Stream by {name}", "Stream van {name}"],
   "Play/pause tous les streams (Espace)": [
     "Play/pause all streams (Space)",

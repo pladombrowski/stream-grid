@@ -65,6 +65,13 @@ import {
   openExtensionWindow,
 } from "../services/extensionWindows";
 import { credit, decayed, type WatchEntry } from "../services/watchtime";
+import {
+  TwitchChatClient,
+  emoteUrl,
+  type TwitchChatEvent,
+  type TwitchChatMessage,
+  type TwitchChatStatus,
+} from "../services/twitchChat";
 
 function formatUptime(elapsed: number) {
   const seconds = Math.max(0, Math.floor(elapsed / 1000)), // a viewer's clock can sit behind Twitch's
@@ -100,6 +107,7 @@ export function startWorkspace(
   const list = $("#list"),
     grid = $("#grid");
   const tiles = new Map<string, Tile>(); // twitch login -> { el, player, bar }
+  const chats = new Map<string, TwitchChatClient>(); // twitch login -> IRC connection
   let streamers: Channel[] = [],
     focused: string | null = null,
     locked = false,
@@ -446,6 +454,215 @@ export function startWorkspace(
     }),
   );
 
+  type ChatMode = "native" | "embed" | "prompt";
+  function chatMode(t: Tile): ChatMode {
+    if (isYouTubeChannel(t.channel)) return "embed";
+    if (library?.user && library?.canChat()) return "native";
+    return library?.clientId ? "prompt" : "embed";
+  }
+  function stopChat(login: string) {
+    chats.get(login)?.stop();
+    chats.delete(login);
+  }
+  function chatPrompt(reconnect: boolean) {
+    const prompt = document.createElement("div");
+    prompt.className = "native-chat-prompt";
+    const text = document.createElement("p");
+    text.textContent = reconnect
+      ? tr("Reconnecte Twitch pour envoyer des messages.")
+      : tr("Connecte Twitch pour envoyer des messages.");
+    const button = document.createElement("button");
+    button.type = "button";
+    button.textContent = reconnect
+      ? tr("Reconnecter Twitch")
+      : tr("Connecter Twitch");
+    button.addEventListener("click", () => actions.connect?.());
+    prompt.append(text, button);
+    return prompt;
+  }
+  function chatNotice(text: string, error: boolean) {
+    const row = document.createElement("li");
+    row.className = "native-chat-notice" + (error ? " error" : "");
+    row.textContent = text;
+    return row;
+  }
+  function appendChatText(container: HTMLElement, message: TwitchChatMessage) {
+    const dark = document.documentElement.dataset.theme === "dark";
+    const ranges = message.emotes
+      .flatMap((emote) =>
+        emote.ranges.map(([start, end]) => ({ id: emote.id, start, end })),
+      )
+      .sort((a, b) => a.start - b.start);
+    let cursor = 0;
+    for (const range of ranges) {
+      if (range.start < cursor || range.start >= message.text.length) continue;
+      if (range.start > cursor)
+        container.append(
+          document.createTextNode(message.text.slice(cursor, range.start)),
+        );
+      const fallback = message.text.slice(range.start, range.end + 1);
+      const url = emoteUrl(range.id, dark);
+      if (!url) {
+        container.append(document.createTextNode(fallback));
+        cursor = range.end + 1;
+        continue;
+      }
+      const image = document.createElement("img");
+      image.className = "native-chat-emote";
+      image.src = url;
+      image.alt = fallback;
+      image.loading = "lazy";
+      image.addEventListener("error", () =>
+        image.replaceWith(document.createTextNode(fallback)),
+      );
+      container.append(image);
+      cursor = range.end + 1;
+    }
+    if (cursor < message.text.length)
+      container.append(document.createTextNode(message.text.slice(cursor)));
+  }
+  function chatMessage(message: TwitchChatMessage) {
+    const row = document.createElement("li");
+    row.className = "native-chat-message";
+    row.classList.toggle("action", message.action);
+    const time = document.createElement("time");
+    time.className = "native-chat-time";
+    const date = new Date(message.sentAt);
+    time.dateTime = date.toISOString();
+    time.textContent = date.toLocaleTimeString(preferences.language, {
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+    row.append(time);
+    const name = document.createElement("span");
+    name.className = "native-chat-name";
+    name.textContent = message.displayName;
+    name.style.color = message.color;
+    const text = document.createElement("span");
+    text.className = "native-chat-text";
+    if (message.action) text.append(document.createTextNode("* "));
+    appendChatText(text, message);
+    row.append(name, text);
+    return row;
+  }
+  function appendChatEvent(t: Tile, event: TwitchChatEvent) {
+    const log = t.chat.querySelector<HTMLOListElement>(".native-chat-log");
+    if (!log) return;
+    const stick =
+      log.scrollTop + log.clientHeight >= log.scrollHeight - 24;
+    log.append(
+      event.type === "message"
+        ? chatMessage(event.message)
+        : chatNotice(event.notice.text, event.notice.error),
+    );
+    while (log.children.length > 200) log.firstElementChild?.remove();
+    if (stick) log.scrollTop = log.scrollHeight;
+  }
+  function updateChatStatus(t: Tile, status: TwitchChatStatus) {
+    const panel = t.chat.querySelector<HTMLElement>(".native-chat-status");
+    const text = panel?.querySelector<HTMLElement>("span");
+    const retry =
+      panel?.querySelector<HTMLButtonElement>(".native-chat-retry");
+    const input = t.chat.querySelector<HTMLInputElement>(".native-chat-input");
+    const send = t.chat.querySelector<HTMLButtonElement>(".native-chat-send");
+    if (!panel || !text || !retry || !input || !send) return;
+    const message =
+      status === "connecting"
+        ? tr("Connexion au chat…")
+        : status === "reconnecting"
+          ? tr("Chat déconnecté. Reconnexion…")
+          : status === "failed"
+            ? tr("Impossible de se connecter au chat.")
+            : "";
+    text.textContent = message;
+    panel.hidden = !message;
+    retry.hidden = status !== "failed";
+    retry.textContent = tr("Reconnecter Twitch");
+    input.disabled = status !== "connected";
+    send.disabled = status !== "connected";
+  }
+  function startNativeChat(t: Tile) {
+    const login = t.channel.twitch;
+    const user = library?.user;
+    if (!user) return;
+    const panel = document.createElement("div");
+    panel.className = "native-chat";
+    const status = document.createElement("div");
+    status.className = "native-chat-status";
+    const statusText = document.createElement("span");
+    const retry = document.createElement("button");
+    retry.type = "button";
+    retry.className = "native-chat-retry";
+    retry.textContent = tr("Reconnecter Twitch");
+    retry.hidden = true;
+    status.append(statusText, retry);
+    const log = document.createElement("ol");
+    log.className = "native-chat-log";
+    log.setAttribute("role", "log");
+    log.setAttribute("aria-live", "polite");
+    log.setAttribute("aria-relevant", "additions");
+    const form = document.createElement("form");
+    form.className = "native-chat-form";
+    const input = document.createElement("input");
+    input.className = "native-chat-input";
+    input.type = "text";
+    input.maxLength = 500;
+    input.autocomplete = "off";
+    input.placeholder = tr("Envoyer un message");
+    input.setAttribute("aria-label", tr("Envoyer un message"));
+    input.disabled = true;
+    const send = document.createElement("button");
+    send.type = "submit";
+    send.className = "native-chat-send";
+    send.textContent = tr("Chat");
+    send.disabled = true;
+    form.append(input, send);
+    panel.append(status, log, form);
+    t.chat.append(panel);
+    const client = new TwitchChatClient({
+      channel: login,
+      login: user.login,
+      token: () => library?.token || "",
+      refresh: async () => {
+        const refreshed = await library?.refreshSession();
+        return !!refreshed;
+      },
+      onStatus: (next) => updateChatStatus(t, next),
+      onEvent: (event) => appendChatEvent(t, event),
+    });
+    chats.set(login, client);
+    retry.addEventListener("click", () => actions.connect?.());
+    form.addEventListener("submit", (event) => {
+      event.preventDefault();
+      const value = input.value.trim();
+      if (!value) return;
+      if (!client.send(value)) return;
+      input.value = "";
+      input.focus();
+    });
+    updateChatStatus(t, "connecting");
+    client.start();
+  }
+  function buildChat(t: Tile, mode: ChatMode) {
+    const login = t.channel.twitch;
+    stopChat(login);
+    t.chat.replaceChildren();
+    t.chat.dataset.mode = mode;
+    if (mode === "native") {
+      startNativeChat(t);
+      return;
+    }
+    if (mode === "prompt")
+      t.chat.append(chatPrompt(!!library?.user));
+    const dark = document.documentElement.dataset.theme === "dark";
+    const frame = document.createElement("iframe");
+    frame.src = isYouTubeChannel(t.channel)
+      ? youtubeChatUrl(t.channel.youtubeId!, dark)
+      : `https://www.twitch.tv/embed/${login}/chat?parent=${encodeURIComponent(location.hostname)}` +
+        (dark ? "&darkpopout=1" : "");
+    frame.title = tr("Chat de {name}", { name: t.channel.display });
+    t.chat.append(frame);
+  }
   function syncChat() {
     for (const [login, t] of tiles) {
       const youtube = isYouTubeChannel(t.channel);
@@ -467,35 +684,23 @@ export function startWorkspace(
       button.title = visible ? tr("Masquer le chat") : tr("Afficher le chat");
       button.setAttribute("aria-label", button.title);
       if (!visible) {
-        t.chat
-          .querySelector<HTMLIFrameElement | HTMLVideoElement>("iframe, video")
-          ?.remove();
+        stopChat(login);
+        t.chat.replaceChildren();
+        delete t.chat.dataset.mode;
         delete t.body.dataset.chatPosition;
         continue;
       }
-      const dark = document.documentElement.dataset.theme === "dark";
-      const chatSrc = youtube
-        ? youtubeChatUrl(t.channel.youtubeId!, dark)
-        : `https://www.twitch.tv/embed/${login}/chat?parent=${encodeURIComponent(location.hostname)}` +
-          (dark ? "&darkpopout=1" : "");
-      if (
-        !t.chat.querySelector<HTMLIFrameElement | HTMLVideoElement>(
-          "iframe, video",
-        )!
-      ) {
-        const frame = document.createElement("iframe");
-        frame.src = chatSrc;
-        frame.title = tr("Chat de {name}", { name: t.channel.display });
-        t.chat.append(frame);
+      const mode = chatMode(t);
+      if (t.chat.dataset.mode !== mode) buildChat(t, mode);
+      else if (mode !== "native") {
+        const dark = document.documentElement.dataset.theme === "dark";
+        const src = youtube
+          ? youtubeChatUrl(t.channel.youtubeId!, dark)
+          : `https://www.twitch.tv/embed/${login}/chat?parent=${encodeURIComponent(location.hostname)}` +
+            (dark ? "&darkpopout=1" : "");
+        const frame = t.chat.querySelector<HTMLIFrameElement>("iframe");
+        if (frame && frame.src !== src) frame.src = src;
       }
-      if (
-        t.chat.querySelector<HTMLIFrameElement | HTMLVideoElement>(
-          "iframe, video",
-        )!.src !== chatSrc
-      )
-        t.chat.querySelector<HTMLIFrameElement | HTMLVideoElement>(
-          "iframe, video",
-        )!.src = chatSrc;
       layoutChat(t);
     }
   }
@@ -1997,6 +2202,7 @@ export function startWorkspace(
     views.remove(
       tile.extensions.querySelector<HTMLElement>(".extensions-list")!,
     );
+    stopChat(login);
     views.remove(tile.el);
     tile.el.remove();
     tiles.delete(login);
@@ -3466,7 +3672,7 @@ export function startWorkspace(
         }
         refreshAttempted = false;
       }
-      disconnect(false);
+      disconnect(false, false);
     }
     notice(failure.message);
   }
@@ -3603,7 +3809,7 @@ export function startWorkspace(
     }
     if (changed) renderList();
   }
-  function disconnect(clearNotice = true) {
+  function disconnect(clearNotice = true, deleteSession = true) {
     lastLiveStatus.clear();
     for (const login of liveNotifications.keys())
       dismissLiveNotification(login);
@@ -3615,7 +3821,9 @@ export function startWorkspace(
     searchError = "";
     $<HTMLInputElement>("#q").value = "";
     hidePreview();
-    library.disconnect();
+    if (deleteSession) library.disconnect();
+    else library.forget();
+    for (const login of [...chats.keys()]) stopChat(login);
     follows = [];
     results = [];
     lastFollows = 0;
@@ -3629,6 +3837,7 @@ export function startWorkspace(
     updateAccount();
     rebuild();
     switchLayout("guest");
+    syncChat();
     if (clearNotice) notice();
     refresh();
   }
@@ -3727,7 +3936,7 @@ export function startWorkspace(
         cause instanceof Error
           ? (cause as HttpError)
           : new HttpError(String(cause));
-      library.disconnect();
+      library.forget();
       notice(error.message);
     }
     if (lifecycle.disposed) return;
@@ -3811,7 +4020,7 @@ export function startWorkspace(
         cause instanceof Error
           ? (cause as HttpError)
           : new HttpError(String(cause));
-      disconnect(false);
+      disconnect(false, false);
       notice(error.message);
     }
   }, 3600000);
